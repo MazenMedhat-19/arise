@@ -210,6 +210,7 @@ function addXp(n) {
   if (after.lvl > before) {
     const rk = rankOf(after.lvl);
     queueToast('LEVEL UP', `You reached Level ${after.lvl}`, `${rk.k}-RANK · ${rk.title}`, 'levelup');
+    setTimeout(() => burst('level', `LV ${after.lvl}`), 50);
   }
   updateTop();
 }
@@ -276,16 +277,21 @@ function closeSheet() {
 
 /* ================= Router ================= */
 let route = (location.hash || '#home').slice(1);
+let lastRoute = null, lastDone = null;
 function go(r) { route = r; if (location.hash !== '#' + r) history.replaceState(null, '', '#' + r); render(); window.scrollTo(0, 0); }
 function render() {
   document.body.classList.toggle('onboarding', !S.profile);
   if (!S.profile) { $('#view').innerHTML = renderOnboarding(); updateTop(); return; }
   const views = { home: renderHome, fuel: renderFuel, train: renderTrain, rehab: renderRehab, plan: renderPlan };
   if (!views[route]) route = 'home';
-  $('#view').innerHTML = views[route]();
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.go === route));
+  const entering = route !== lastRoute; lastRoute = route;
+  const view = $('#view');
+  view.innerHTML = views[route]();
+  view.classList.toggle('enter', entering);
+  $$('.tab').forEach((t, i) => { const on = t.dataset.go === route; t.classList.toggle('active', on); if (on) $('#tabbar').style.setProperty('--ti', i); });
   updateTop();
   afterRender();
+  motion(entering);
 }
 function updateTop() {
   const rk = rankOf(levelInfo(S.xp).lvl);
@@ -312,8 +318,8 @@ function ring(cur, goal) {
   return `<div class="ring"><svg viewBox="0 0 132 132" aria-hidden="true">
     <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3df5a7"/><stop offset="1" stop-color="#3df5a7"/></linearGradient></defs>
     <circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"/>
-    <circle cx="66" cy="66" r="${R}" fill="none" stroke="${over ? '#ff453a' : 'url(#rg)'}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}" />
-  </svg><div class="center"><div class="num">${r0(Math.abs(left))}</div><div class="lbl">${over ? 'KCAL OVER' : 'KCAL LEFT'}</div></div></div>`;
+    <circle cx="66" cy="66" r="${R}" fill="none" stroke="${over ? '#ff453a' : 'url(#rg)'}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}" class="arc" style="--c:${C}"/>
+  </svg><div class="center"><div class="num" data-count="${r0(Math.abs(left))}">${r0(Math.abs(left))}</div><div class="lbl">${over ? 'KCAL OVER' : 'KCAL LEFT'}</div></div></div>`;
 }
 function lineChart(pts, { unit = '', color = '#3df5a7', target = null } = {}) {
   if (pts.length < 2) return `<div class="empty">Log at least two entries to see the trend.</div>`;
@@ -481,7 +487,7 @@ function miniRing(pct, color, value, label, action) {
   const R = 30, C = 2 * Math.PI * R, p = clamp(pct, 0, 1);
   return `<button class="mring" data-action="${action}" aria-label="${esc(label)} ${esc(value)}">
     <svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="7"/>
-    <circle cx="36" cy="36" r="${R}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}" transform="rotate(-90 36 36)"/></svg>
+    <circle cx="36" cy="36" r="${R}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}" transform="rotate(-90 36 36)" class="arc" style="--c:${C}"/></svg>
     <span class="mv">${value}</span><span class="ml">${label}</span></button>`;
 }
 function greeting() { const h = new Date().getHours(); return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
@@ -519,7 +525,7 @@ function renderHome() {
   <div class="panel cut-card" data-action="go-body" role="button" tabindex="0">
     <div class="panel-title">${S.profile.goal === 'acut' ? 'Aggressive cut' : 'Cut'} <small>${ct.daysLeft != null ? `${ct.daysLeft} days left` : ''}</small></div>
     <div class="cut-row">
-      <div><div class="big-num">${ct.cur ? r1(ct.cur.v) : r1(S.profile.weight)}<span>kg</span></div><div class="ml">7-day average</div></div>
+      <div><div class="big-num"><span class="cnt" data-count="${ct.cur ? r1(ct.cur.v) : r1(S.profile.weight)}" data-dec="1">${ct.cur ? r1(ct.cur.v) : r1(S.profile.weight)}</span><span>kg</span></div><div class="ml">7-day average</div></div>
       <div><div class="big-num ${ct.rate == null ? 'dim' : ''}">${ct.rate == null ? '—' : (ct.rate > 0 ? '+' : '') + r1(ct.rate)}<span>kg/wk</span></div><div class="ml">${ct.pct == null ? 'weekly rate' : r1(ct.pct) + '% / week'}</div></div>
       <div><div class="big-num ${ct.proj == null ? 'dim' : ''}">${ct.proj == null ? (S.profile.targetWeight || '—') : r1(ct.proj)}<span>kg</span></div><div class="ml">${ct.proj == null ? 'target' : 'projected'}</div></div>
     </div>
@@ -531,7 +537,7 @@ function renderHome() {
     <div class="xp-line" style="margin-top:0"><span>EXP to level ${li.lvl + 1}</span><span>${li.into} / ${li.need}</span></div>${bar(li.into, li.need)}
     <div style="margin-top:8px">
     ${qs.map(qu => `
-      <div class="quest ${qu.done ? 'done' : ''}" ${qu.manual ? `data-action="quest-toggle" data-id="${qu.id}" role="button" tabindex="0"` : qu.action ? `data-action="${qu.action}" role="button" tabindex="0"` : qu.go ? `data-go="${qu.go}" role="button" tabindex="0"` : ''}>
+      <div class="quest ${qu.done ? 'done' : ''}" data-qid="${qu.id}" ${qu.manual ? `data-action="quest-toggle" data-id="${qu.id}" role="button" tabindex="0"` : qu.action ? `data-action="${qu.action}" role="button" tabindex="0"` : qu.go ? `data-go="${qu.go}" role="button" tabindex="0"` : ''}>
         <span class="qbox">${qu.done ? ic('check') : ''}</span>
         <div class="spacer"><div class="qname">${esc(qu.name)}</div>
           ${qu.goal ? `<div class="qprog">${qu.cur.toLocaleString('en')} / ${qu.goal.toLocaleString('en')} ${qu.unit || ''}</div>` : qu.manual ? `<div class="qprog">Tap when done</div>` : ''}</div>
@@ -550,7 +556,7 @@ function renderHome() {
   <div class="panel" data-go="fuel" role="button" tabindex="0">
     <div class="panel-title">Macros <small>${r0(tot.kcal)} / ${t.kcal} kcal</small></div>
     <div class="grid3">
-      ${[['Protein', tot.p, t.p, 'p'], ['Carbs', tot.c, t.c, 'c'], ['Fat', tot.f, t.f, 'f']].map(([n, c, g, cl]) => `<div><div class="macro-k">${n}</div><div class="macro-v">${r0(c)}<span>/${g}g</span></div>${bar(c, g, cl)}</div>`).join('')}
+      ${[['Protein', tot.p, t.p, 'p'], ['Carbs', tot.c, t.c, 'c'], ['Fat', tot.f, t.f, 'f']].map(([n, c, g, cl]) => `<div><div class="macro-k">${n}</div><div class="macro-v"><span class="cnt" data-count="${r0(c)}">${r0(c)}</span><span>/${g}g</span></div>${bar(c, g, cl)}</div>`).join('')}
     </div>
   </div>
 
@@ -561,7 +567,7 @@ function renderHome() {
 
   <div class="panel">
     <div class="panel-title">Hunter stats <small>${esc(rk.title)}</small></div>
-    <div class="stats" style="margin-top:0">${Object.entries(st).map(([kk, v]) => `<div class="stat"><div class="k">${kk}</div><div class="v">${v}</div></div>`).join('')}</div>
+    <div class="stats" style="margin-top:0">${Object.entries(st).map(([kk, v]) => `<div class="stat"><div class="k">${kk}</div><div class="v" data-count="${v}">${v}</div></div>`).join('')}</div>
   </div>`;
 }
 
@@ -697,28 +703,46 @@ function renderResults(online) {
   else if (searchTab === 'mine') pool = S.customFoods.map(f => ({ ...f, src: 'MINE' }));
   else if (searchTab === 'egypt') pool = FOODS.map(f => ({ ...f, src: 'ARISE' }));
   else pool = [...S.customFoods.map(f => ({ ...f, src: 'MINE' })), ...FOODS.map(f => ({ ...f, src: 'ARISE' }))];
-  if (q) pool = pool.filter(f => f.name.toLowerCase().includes(q) || (f.ar || '').includes(q));
+  if (q) {
+    const words = q.split(/\s+/).filter(Boolean);
+    pool = pool.filter(f => { const hay = `${f.name} ${f.ar || ''} ${f.code || ''}`.toLowerCase(); return words.every(w => hay.includes(w)); });
+  }
   lastResults = [...(online || []), ...pool.slice(0, 40)];
   box.innerHTML = lastResults.length ? lastResults.map((f, i) => `
     <div class="result" data-action="pick-food" data-i="${i}" role="button" tabindex="0">
       <div class="spacer"><div class="nm">${esc(f.name)}</div>${f.ar ? `<div class="ar">${esc(f.ar)}</div>` : ''}
       <div class="sub">${r0(f.kcal)} kcal · P ${r1(f.p)} · C ${r1(f.c)} · F ${r1(f.f)} per 100 g</div></div>
       <span class="src">${f.src === 'OFF' ? 'ONLINE' : f.src}</span></div>`).join('')
-    : `<div class="empty">No matches here. Try Online or create a custom food.</div>`;
+    : `<div class="empty-card">
+        <div class="ec-t">${q ? `No “${esc(q)}” in your foods yet` : 'Nothing here yet'}</div>
+        <div class="ec-s">Search online, scan the barcode on the pack, or add it once from the label — it’s saved for next time.</div>
+        <div class="ec-b">${q ? `<button class="btn cyan sm" data-action="search-online">${ic('search')} Search online</button>` : ''}
+          <button class="btn sm" data-action="open-scan">${ic('scan')} Scan</button>
+          <button class="btn sm" data-action="open-custom">${ic('plus')} Add from label</button></div></div>`;
+}
+function fetchT(url, ms = 9000) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { signal: ac.signal }).finally(() => clearTimeout(t));
 }
 async function searchOnline() {
   const q = val('sq');
   if (q.length < 2) { toast('SYSTEM', 'Type at least 2 letters.'); return; }
   const box = $('#results');
-  box.innerHTML = `<div class="empty">Searching Open Food Facts…</div>`;
+  box.innerHTML = `<div class="skeleton-list">${'<div class="sk"></div>'.repeat(4)}</div><div class="empty" style="text-align:center">Searching Open Food Facts…</div>`;
   try {
     const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=25&fields=code,product_name,product_name_en,product_name_ar,brands,nutriments,serving_quantity,serving_size`;
-    const j = await (await fetch(url)).json();
+    const r = await fetchT(url);
+    if (!r.ok) throw new Error('busy');
+    const j = await r.json();
     const list = (j.products || []).map(p => offToFood(p, p.code)).filter(Boolean);
+    if (!$('#results')) return;
     renderResults(list);
-    if (!list.length) toast('SYSTEM', 'Nothing found online.');
+    if (!list.length) toast('SYSTEM', 'Nothing found online. Scan the barcode instead.');
   } catch (e) {
-    box.innerHTML = `<div class="empty">Could not reach the online database. Check your connection.</div>`;
+    if (!$('#results')) return;
+    renderResults();
+    const b = $('#results');
+    b.insertAdjacentHTML('afterbegin', `<div class="penalty" style="margin:0 0 10px"><b>ONLINE SEARCH ISN’T ANSWERING</b>The free food database is busy right now. Scan the barcode on the pack — that lookup almost always works — or add it once from the label.</div>`);
   }
 }
 function offToFood(p, code) {
@@ -769,11 +793,11 @@ async function stopScan() {
 async function lookupBarcode(code) {
   code = String(code).trim();
   if (!code) return;
-  const local = S.customFoods.find(f => f.code === code) || S.recent.find(f => f.code === code);
+  const local = S.customFoods.find(f => f.code === code) || S.recent.find(f => f.code === code) || FOODS.find(f => f.code === code);
   if (local) return openFoodSheet(local);
   openSheet(`<h2>SCANNING DATABASE</h2><p class="muted">Looking up ${esc(code)}…</p>`);
   try {
-    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=code,product_name,product_name_en,product_name_ar,brands,nutriments,serving_quantity,serving_size`);
+    const r = await fetchT(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=code,product_name,product_name_en,product_name_ar,brands,nutriments,serving_quantity,serving_size`);
     const j = await r.json();
     if (j.status === 1 && j.product) {
       const f = offToFood(j.product, code);
@@ -1270,6 +1294,7 @@ const A = {
   'fuel-date': el => { const n = +el.dataset.d; const k = addDays(fuelDate, n); if (k <= dkey()) { fuelDate = k; render(); } },
   'open-scan': () => openScan(),
   'open-search': el => openSearch(el.dataset.meal),
+  'sheet-x': () => closeSheet(),
   'open-quick': () => openQuick(),
   'open-custom': () => openCustom({ name: val('sq') }),
   'search-tab': el => { searchTab = el.dataset.t; $$('[data-action="search-tab"]').forEach(b => b.classList.toggle('on', b === el)); renderResults(); },
@@ -1440,6 +1465,60 @@ document.addEventListener('change', e => { const c = e.target.dataset?.change; i
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'sq') searchOnline(); if (e.key === 'Enter' && e.target.id === 'bc') A['manual-barcode'](); });
 window.addEventListener('hashchange', () => { const r = location.hash.slice(1); if (r && r !== route) { route = r; render(); } });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (fuelDate > dkey()) fuelDate = dkey(); render(); } });
+
+/* ================= Motion ================= */
+const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+function countUp(el) {
+  const to = +el.dataset.count, dec = +(el.dataset.dec || 0), suf = el.dataset.suf || '';
+  if (!isFinite(to) || reduceMotion()) return;
+  const t0 = performance.now(), dur = 750;
+  const step = now => {
+    const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = (to * e).toFixed(dec) + suf;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function motion(entering) {
+  if (entering) $$('#view [data-count]').forEach(countUp);
+  const done = $$('.quest.done');
+  if (route === 'home') {
+    if (lastDone) done.forEach(q => { if (!lastDone.has(q.dataset.qid)) q.classList.add('just'); });
+    lastDone = new Set(done.map(q => q.dataset.qid));
+  }
+}
+function burst(kind = 'level', label = '') {
+  if (reduceMotion()) return;
+  const fx = $('#fx');
+  const colors = kind === 'level' ? ['#ffd60a', '#3df5a7', '#fff'] : ['#3df5a7', '#5ac8fa', '#fff'];
+  const parts = Array.from({ length: 28 }, (_, i) => {
+    const a = (i / 28) * Math.PI * 2, d = 90 + Math.random() * 110;
+    return `<i style="--x:${Math.cos(a) * d}px;--y:${Math.sin(a) * d}px;--c:${colors[i % 3]};--r:${Math.random() * 360}deg;animation-delay:${Math.random() * 60}ms"></i>`;
+  }).join('');
+  fx.innerHTML = `<div class="fx-core ${kind}">${label ? `<b>${esc(label)}</b>` : ''}</div>${parts}`;
+  fx.classList.toggle('on', false); void fx.offsetWidth; fx.classList.toggle('on', true);
+  clearTimeout(burst.t); burst.t = setTimeout(() => { fx.classList.toggle('on', false); fx.innerHTML = ''; }, 1500);
+}
+/* Swipe a sheet down to close it */
+(() => {
+  let y0 = null, dy = 0, panel = null;
+  document.addEventListener('touchstart', e => {
+    panel = e.target.closest('.sheet-panel');
+    if (!panel || (panel.scrollTop > 0 && !e.target.closest('.sheet-grab'))) { panel = null; return; }
+    y0 = e.touches[0].clientY; dy = 0; panel.style.transition = 'none';
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!panel || y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    if (dy > 0) panel.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (!panel) return;
+    panel.style.transition = ''; panel.style.transform = '';
+    if (dy > 110) closeSheet();
+    panel = null; y0 = null; dy = 0;
+  });
+})();
 
 /* ================= Boot ================= */
 render();
