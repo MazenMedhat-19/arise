@@ -152,7 +152,11 @@ const TEMPLATES = {
     ],
   },
   lower: {
-    name: 'LOWER', sub: 'Knee-safe — set by your rehab phase', icon: '🦵', type: 'lower',
+    name: 'LOWER A', sub: 'Quad strength — set by your rehab phase', icon: '🦵', type: 'lower',
+    ex: [], // filled from the current ACL phase
+  },
+  lower2: {
+    name: 'LOWER B', sub: 'Knee strength + control', icon: '🦵', type: 'lower',
     ex: [], // filled from the current ACL phase
   },
   core: {

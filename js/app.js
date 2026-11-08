@@ -22,6 +22,7 @@ const ICONS = {
   pull: '<path d="M12 5v14M5 12l7 7 7-7"/>',
   upper: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
   lower: '<path d="M8 3v8l-3 10h4l3-7 3 7h4l-3-10V3"/>',
+  lower2: '<path d="M8 3v8l-3 10h4l3-7 3 7h4l-3-10V3"/><path d="M19 4v4M17 6h4"/>',
   core: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
   rest: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   scan: '<path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M14 8v8M17 8v8"/>',
@@ -53,6 +54,17 @@ const DEFAULT_STATE = () => ({
   weights: [], prs: {}, lastW: {}, history: [], split: { ...DEFAULT_SPLIT }, settings: { googleClientId: '' },
 });
 let S = load();
+/* One-time coach updates for existing data */
+function migrate() {
+  const old = { 6: 'push', 0: 'pull', 1: 'rest', 2: 'lower', 3: 'upper', 4: 'rest', 5: 'rest' };
+  if (!S.migr || S.migr < 13) {
+    const same = Object.keys(old).every(k => S.split?.[k] === old[k]);
+    if (same) S.split = { 6: 'push', 0: 'lower', 1: 'pull', 2: 'rest', 3: 'upper', 4: 'lower2', 5: 'rest' };
+    S.migr = 13;
+    try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ }
+  }
+}
+migrate();
 function load() {
   try { const raw = localStorage.getItem(STORE); if (raw) return Object.assign(DEFAULT_STATE(), JSON.parse(raw)); } catch (e) { /* ignore */ }
   return DEFAULT_STATE();
@@ -121,14 +133,41 @@ function aclInfo() {
   if (a.override != null && a.override !== '') idx = +a.override;
   else idx = weeks == null ? 0 : ACL_PHASES.findIndex(ph => weeks < ph.weeks[1]);
   if (idx < 0) idx = ACL_PHASES.length - 1;
-  return { phase: ACL_PHASES[idx], idx, weeks, a };
+  let locked = false;
+  if ((a.override == null || a.override === '') && idx === 4 && !a.cleared) { idx = 3; locked = true; }
+  return { phase: ACL_PHASES[idx], idx, weeks, a, locked };
 }
 
 /* ================= Training ================= */
+const LEG_A = [
+  ['Leg press', 4, '8-10', 120, 'Feet mid-platform, full range you control. Push through the whole foot.'],
+  ['Bulgarian split squat', 3, '8 / side', 90, 'Operated leg first. Torso tall, slow 3 s down.'],
+  ['Leg extension', 3, '12-15', 75, 'Slow 3 s lowering, 1 s squeeze at the top. Quads are the knee’s armour.'],
+  ['Single-leg leg extension — operated leg', 2, '12-15', 60, 'Extra quad work for the operated side only. Closes the strength gap.'],
+  ['Romanian deadlift', 3, '8-10', 120, 'Hinge at the hips, soft knees, flat back.'],
+  ['Lying leg curl', 3, '10-12', 75, 'Slow on the way down. Strong hamstrings protect the graft.'],
+  ['Hip abduction machine', 3, '15', 60, 'Strong hips keep the knee from caving in.'],
+  ['Seated calf raise', 3, '15', 60, 'Full stretch at the bottom.'],
+];
+const LEG_B = [
+  ['Back squat / safety bar squat', 4, '6-8', 150, 'Depth you control. Add 2.5 kg only when every rep looks the same.'],
+  ['Forward step-down', 3, '10 / side', 75, 'Slow, knee tracks over the 2nd toe. Operated leg first.'],
+  ['Single-leg RDL', 3, '10 / side', 75, 'Hips square to the floor. Balance + hamstrings.'],
+  ['Spanish squat (band) — hold', 3, '45 s', 60, 'Band behind the knees, sit back. Loads the quads with almost no joint stress.'],
+  ['Leg extension', 3, '12-15', 75, 'Slow lowering. One extra set on the operated leg if it feels good.'],
+  ['Nordic hamstring (assisted)', 3, '5', 90, 'Lower as slow as you can, catch with your hands.'],
+  ['Standing calf raise', 4, '12-15', 60, 'Pause at the top.'],
+  ['Single-leg balance (eyes closed)', 3, '30 s / side', 30, 'Knee soft. Trains the knee’s position sense.'],
+];
 function template(key) {
   const t = TEMPLATES[key] || TEMPLATES.rest;
-  if (key !== 'lower') return t;
+  if (key !== 'lower' && key !== 'lower2') return t;
   const info = aclInfo();
+  if (!info || info.idx >= 3) {
+    const ex = (key === 'lower2' ? LEG_B : LEG_A).slice();
+    if (info?.idx >= 3) ex.push(['Bike — easy flush', 1, '8-10 min', 0, 'Easy spin to finish. Keeps the knee happy.']);
+    return { ...t, ex, sub: info ? `${info.phase.arc} · ${key === 'lower2' ? 'strength + control' : 'quad strength'}` : 'Legs · Glutes' };
+  }
   let ex;
   if (!info) {
     ex = [
@@ -417,11 +456,19 @@ function quoteCard(q, extra = '') {
     <div class="qby">${esc(q.by).toUpperCase()}</div><div class="qfrom">${esc(q.from)}</div></div>`;
 }
 /* ================= Readiness · steps · cut trend · muscle volume ================= */
+function rhrBase(k) {
+  const xs = Array.from({ length: 21 }, (_, i) => S.days[addDays(k, -i - 1)]?.band?.rhr).filter(Boolean);
+  return xs.length >= 3 ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
 function readiness(k = dkey()) {
   const r = S.days[k]?.ready;
   if (!r) return null;
-  const score = Math.round(
-    clamp(r.sleep / 8, 0, 1) * 35 + ((r.q - 1) / 4) * 20 + ((5 - r.sore) / 4) * 15 + ((10 - r.knee) / 10) * 15 + ((r.energy - 1) / 4) * 15);
+  const band = S.days[k]?.band || {};
+  const sleep = band.sleep || r.sleep;
+  let score = clamp(sleep / 8, 0, 1) * 35 + ((r.q - 1) / 4) * 20 + ((5 - r.sore) / 4) * 15 + ((10 - r.knee) / 10) * 15 + ((r.energy - 1) / 4) * 15;
+  const base = rhrBase(k);
+  if (band.rhr && base) { const dlt = band.rhr - base; if (dlt > 2) score -= Math.min(20, (dlt - 2) * 3); else if (dlt < -2) score += 4; }
+  score = Math.round(clamp(score, 0, 100));
   let zone, tip;
   if (score >= 70) { zone = 'go'; tip = 'Green light. Train heavy and chase a rep PR.'; }
   else if (score >= 45) { zone = 'mid'; tip = 'Train normally. Keep the loads, skip extra sets and PR attempts.'; }
@@ -514,6 +561,10 @@ function renderHome() {
     </div>
     ${rd ? `<div class="ready-tip zone-${rd.zone}"><b>${rd.zone === 'go' ? 'PRIMED' : rd.zone === 'mid' ? 'STEADY' : 'RECOVER'}</b>${esc(rd.tip)}</div>`
       : `<button class="btn primary block" style="margin-top:14px" data-action="open-checkin">${ic('moon')} Morning check-in · 20 seconds</button>`}
+    <div class="row" style="margin-top:12px;gap:8px">
+      <button class="btn sm cyan" data-action="band-paste">${ic('download')} Sync band</button>
+      <button class="btn sm" data-action="band-help">${d.band?.at ? `Synced ${new Date(d.band.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Set up band'}</button>
+    </div>
     <div class="today-train" data-go="train" role="button" tabindex="0">
       <span class="tmpl-ic">${ic(tk)}</span>
       <div class="spacer"><div class="tt-k">${tk === 'rest' ? 'Rest day' : 'Today’s session'}</div><div class="tt-v">${esc(tpl.name)}${t.perKg ? ` · ${t.train ? 'Training day' : 'Light day'}` : ''}</div></div>
@@ -572,7 +623,8 @@ function renderHome() {
 }
 
 function openCheckin() {
-  const r = day().ready || { sleep: 7.5, q: 3, sore: 2, knee: 0, energy: 3 };
+  const r = { sleep: 7.5, q: 3, sore: 2, knee: 0, energy: 3, ...(day().ready || {}) };
+  if (day().band?.sleep) r.sleep = day().band.sleep;
   const five = [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']];
   openSheet(`<h2>Morning check-in</h2><p class="muted small" style="margin-top:0">20 seconds. Sets today’s readiness and tells you how hard to push.</p>
     <label for="ci_sleep">Hours slept</label><input id="ci_sleep" type="number" inputmode="decimal" step="0.5" value="${r.sleep}">
@@ -581,6 +633,49 @@ function openCheckin() {
     <label>Knee pain right now</label>${seg('ci_knee', [[0, '0'], [2, '1-2'], [4, '3-4'], [6, '5-6'], [8, '7+']], r.knee)}
     <label>Energy & mood <small class="muted">(1 flat · 5 on fire)</small></label>${seg('ci_energy', five, r.energy)}
     <button class="btn primary block" style="margin-top:18px" data-action="checkin-save">Save check-in</button>`);
+}
+function parseBand(txt) {
+  const num = re => { const m = String(txt).match(re); return m ? parseFloat(m[1].replace(',', '.')) : null; };
+  const out = {};
+  const sm = String(txt).match(/steps?\s*[=:]\s*([\d.,]+)/i); if (sm) out.steps = Math.round(+sm[1].replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.'));
+  let sl = num(/sleep\s*[=:]\s*([\d.,]+)/i); if (sl != null) { if (sl > 24) sl = sl / 60; out.sleep = Math.round(sl * 10) / 10; }
+  const rh = num(/rhr\s*[=:]\s*([\d.,]+)/i); if (rh != null) out.rhr = Math.round(rh);
+  return out;
+}
+function applyBand(b) {
+  if (!b || !Object.keys(b).length) return false;
+  const d = day();
+  d.band = { ...(d.band || {}), ...b, at: Date.now() };
+  if (b.steps != null) d.steps = Math.max(d.steps || 0, b.steps);
+  if (d.ready && b.sleep) d.ready.sleep = b.sleep;
+  evaluate(); render();
+  toast('BAND SYNCED', [b.steps != null ? `${b.steps.toLocaleString('en')} steps` : '', b.sleep ? `${b.sleep} h sleep` : '', b.rhr ? `RHR ${b.rhr}` : ''].filter(Boolean).join(' · '));
+  return true;
+}
+async function pasteBand() {
+  try {
+    const txt = await navigator.clipboard.readText();
+    if (!applyBand(parseBand(txt))) toast('SYSTEM', 'No band data on the clipboard. Run the “ARISE Sync” shortcut first.');
+  } catch (e) { toast('SYSTEM', 'Paste was blocked. Tap Allow Paste when iPhone asks.'); }
+}
+function openBandHelp() {
+  openSheet(`<h2>Xiaomi band sync</h2>
+    <p class="muted small" style="margin-top:0">One-time setup, about 3 minutes. After that: tap the shortcut, open ARISE, tap <b>Sync band</b>.</p>
+    <div class="panel"><div class="panel-title">1 · Mi Fitness → Apple Health</div>
+      <ul class="list"><li>Mi Fitness → Profile → <b>Third-party data</b> (or Settings) → <b>Apple Health</b> → turn on Steps, Sleep and Heart rate.</li></ul></div>
+    <div class="panel"><div class="panel-title">2 · Build the shortcut</div>
+      <ul class="list">
+        <li>Open <b>Shortcuts</b> → <b>+</b> → name it <b>ARISE Sync</b>.</li>
+        <li>Add <b>Find Health Samples</b>: Type <b>Steps</b>, Start Date <b>is today</b>. Then <b>Calculate Statistics</b> → <b>Sum</b>.</li>
+        <li>Add <b>Find Health Samples</b>: Type <b>Sleep Analysis</b>, Start Date <b>is in the last 1 day</b>. Then <b>Get Details</b> → <b>Duration</b>, then <b>Calculate Statistics</b> → <b>Sum</b> (minutes or hours both work).</li>
+        <li>Add <b>Find Health Samples</b>: Type <b>Resting Heart Rate</b>, Sort by Start Date latest, Limit 1. Then <b>Get Details</b> → <b>Value</b>.</li>
+        <li>Add <b>Text</b>: <code>steps=[Sum 1] sleep=[Sum 2] rhr=[Value]</code> using the blue variables.</li>
+        <li>Add <b>Copy to Clipboard</b>. Done — add it to your Home Screen or a widget.</li>
+      </ul></div>
+    <div class="panel"><div class="panel-title">3 · Every morning</div>
+      <ul class="list"><li>Tap <b>ARISE Sync</b> → open ARISE → tap <b>Sync band</b> on the home screen. Steps, sleep and resting heart rate fill in, and readiness uses them.</li>
+      <li>If resting heart rate is a few beats above your normal, ARISE lowers readiness — that’s an early sign of poor recovery or getting sick.</li></ul></div>
+    <button class="btn primary block" data-action="band-paste">${ic('download')} Sync band now</button>`);
 }
 function openSteps() {
   const s = day().steps || 0;
@@ -1004,6 +1099,8 @@ function renderRehab() {
     <div class="phase-banner"><div class="spacer"><div class="arc">${ph.arc}</div><div class="phase-title">${esc(ph.title)}</div>
       <div class="muted small">${info.weeks != null ? `Week ${info.weeks} ${info.a.status === 'postop' ? 'after surgery' : 'since injury'}` : 'Set a date in Settings to auto-track your phase'}${ph.weeks[1] ? ` · usually weeks ${ph.weeks[0]}–${ph.weeks[1]}` : ''}</div></div></div>
     <div class="phase-steps">${ACL_PHASES.map((_, i) => `<i class="${i <= info.idx ? 'on' : ''}"></i>`).join('')}</div>
+    ${info.locked ? `<div class="ready-tip zone-mid"><b>ARC V LOCKED UNTIL CLEARED</b>By date you’re in the return-to-sport phase, but hops, sprints and cutting wait for your physio’s OK. Many people at 9 months still have a quad strength gap — closing it is the biggest thing that prevents a re-tear. Ask your physio for a quad strength test and hop tests.
+      <button class="btn sm" style="margin-top:10px" data-action="acl-cleared">My physio cleared me</button></div>` : ''}
     <label for="phaseSel">Phase (your physio decides)</label>
     <select id="phaseSel" data-change="phase">
       <option value="" ${info.a.override == null || info.a.override === '' ? 'selected' : ''}>Auto from date</option>
@@ -1283,6 +1380,12 @@ const A = {
     toast('READINESS', `${rd.score}% — ${rd.zone === 'go' ? 'primed' : rd.zone === 'mid' ? 'steady' : 'recover'}`);
   },
   'open-steps': () => openSteps(),
+  'band-paste': () => pasteBand(),
+  'band-help': () => openBandHelp(),
+  'acl-cleared': () => {
+    if (!confirm('Only tap OK if your physio or surgeon has cleared you for running, jumping and cutting (usually hop tests ≥ 90% of the other leg).')) return;
+    S.profile.acl.cleared = true; save(); render(); toast('SYSTEM', 'ARC V unlocked. Build up slowly.');
+  },
   'steps-add': el => { const i = $('#st_n'); i.value = (+i.value || 0) + +el.dataset.n; },
   'steps-save': () => { day().steps = Math.max(0, Math.round(+val('st_n') || 0)); closeSheet(); evaluate(); render(); },
   'go-fuel': () => go('fuel'),
@@ -1434,7 +1537,7 @@ const CHANGE = {
     f.text().then(txt => {
       const data = JSON.parse(txt);
       if (!data || typeof data !== 'object' || !('days' in data)) throw new Error('Not an ARISE backup');
-      S = Object.assign(DEFAULT_STATE(), data); save(); closeSheet(); render(); toast('SYSTEM', 'Backup restored.');
+      S = Object.assign(DEFAULT_STATE(), data); migrate(); save(); closeSheet(); render(); toast('SYSTEM', 'Backup restored.');
     }).catch(e => toast('SYSTEM', 'Import failed: ' + e.message));
   },
 };
@@ -1521,6 +1624,7 @@ function burst(kind = 'level', label = '') {
 })();
 
 /* ================= Boot ================= */
+if (location.hash.startsWith('#sync')) { const b = parseBand(decodeURIComponent(location.hash.replace(/[?&]/g, ' '))); history.replaceState(null, '', '#home'); route = 'home'; setTimeout(() => applyBand(b), 300); }
 render();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
