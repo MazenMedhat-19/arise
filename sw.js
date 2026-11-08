@@ -1,5 +1,5 @@
 /* ARISE service worker — offline app shell */
-const VERSION = 'arise-v1.1.0';
+const VERSION = 'arise-v1.2.0';
 const SHELL = ['./', './index.html', './css/style.css', './js/data.js', './js/app.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png'];
 
 self.addEventListener('install', e => {

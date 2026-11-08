@@ -187,8 +187,10 @@ function questList(k = dkey()) {
     q.push({ id: 'rehab', name: `${info.phase.arc}: rehab session`, ic: 'heart', xp: 80, cur: c, goal: n, done: c >= Math.ceil(n * 0.8), go: 'rehab' });
     q.push({ id: 'knee', name: 'Knee check-in', ic: 'heart', xp: 15, done: !!d.knee, go: 'rehab' });
   }
+  q.push({ id: 'steps', name: 'Hit 10k steps', ic: 'bolt', xp: 30, cur: d.steps || 0, goal: 10000, done: (d.steps || 0) >= 10000, action: 'open-steps' });
   q.push({ id: 'study', name: 'Study block — 2h deep focus', ic: 'book', xp: 40, manual: true, done: !!d.manual.study });
-  q.push({ id: 'sleep', name: 'Slept 7h+ last night', ic: 'moon', xp: 20, manual: true, done: !!d.manual.sleep });
+  q.push({ id: 'checkin', name: 'Morning check-in', ic: 'moon', xp: 15, done: !!d.ready, action: 'open-checkin' });
+  q.push({ id: 'sleep', name: 'Slept 7h+ last night', ic: 'moon', xp: 20, done: (d.ready?.sleep || 0) >= 7, action: 'open-checkin' });
   return q;
 }
 function evaluate(k = dkey()) {
@@ -365,7 +367,8 @@ function profileForm(p = {}) {
   </div>
   <label for="pf_act">Activity</label><select id="pf_act">${ACTIVITY.map(([v, l]) => `<option value="${v}" ${+p.activity === v || (!p.activity && v === 1.55) ? 'selected' : ''}>${l}</option>`).join('')}</select>
   <label>Goal</label>${seg('pf_goal', Object.entries(GOALS).map(([k, g]) => [k, g.label]), p.goal || 'recomp')}
-  <label for="pf_tw">Target weight kg (optional)</label><input id="pf_tw" type="number" inputmode="decimal" value="${p.targetWeight || ''}">
+  <div class="grid2"><div><label for="pf_tw">Target weight kg</label><input id="pf_tw" type="number" inputmode="decimal" value="${p.targetWeight || ''}" placeholder="optional"></div>
+  <div><label for="pf_dl">Goal deadline</label><input id="pf_dl" type="date" value="${esc(p.deadline || '')}"></div></div>
   <div class="hr"></div>
   <label for="pf_acl">ACL status</label>
   <select id="pf_acl">
@@ -382,7 +385,7 @@ function readProfileForm(prev = {}) {
   const p = {
     ...prev,
     name: val('pf_name') || 'Hunter', sex: val('pf_sex'), age: +val('pf_age'), height: +val('pf_h'), weight: +val('pf_w'),
-    activity: +val('pf_act'), goal: val('pf_goal'), targetWeight: +val('pf_tw') || null,
+    activity: +val('pf_act'), goal: val('pf_goal'), targetWeight: +val('pf_tw') || null, deadline: val('pf_dl') || null,
     acl: { ...(prev.acl || {}), status: val('pf_acl'), date: val('pf_date'), graft: val('pf_graft') },
   };
   if (!p.age || !p.height || !p.weight) { toast('SYSTEM', 'Age, height and weight are required.'); return null; }
@@ -407,61 +410,178 @@ function quoteCard(q, extra = '') {
     <div class="qt">${esc(q.q)}</div><div class="qa ar">${esc(q.ar)}</div>
     <div class="qby">${esc(q.by).toUpperCase()}</div><div class="qfrom">${esc(q.from)}</div></div>`;
 }
+/* ================= Readiness · steps · cut trend · muscle volume ================= */
+function readiness(k = dkey()) {
+  const r = S.days[k]?.ready;
+  if (!r) return null;
+  const score = Math.round(
+    clamp(r.sleep / 8, 0, 1) * 35 + ((r.q - 1) / 4) * 20 + ((5 - r.sore) / 4) * 15 + ((10 - r.knee) / 10) * 15 + ((r.energy - 1) / 4) * 15);
+  let zone, tip;
+  if (score >= 70) { zone = 'go'; tip = 'Green light. Train heavy and chase a rep PR.'; }
+  else if (score >= 45) { zone = 'mid'; tip = 'Train normally. Keep the loads, skip extra sets and PR attempts.'; }
+  else { zone = 'low'; tip = 'Recovery day. Easy bike, rehab work and steps only. Sleep early.'; }
+  if (r.knee >= 4) tip = 'Knee is talking. No impact today: bike, rehab and upper body only. Ice + elevate if swollen.';
+  return { score, zone, tip, r };
+}
+function wAvg(fromK, toK) {
+  const xs = S.weights.filter(w => w.date >= fromK && w.date <= toK).map(w => +w.kg);
+  return xs.length ? { v: xs.reduce((a, b) => a + b, 0) / xs.length, n: xs.length } : null;
+}
+function cutTrend() {
+  const p = S.profile, today = dkey();
+  const cur = wAvg(addDays(today, -6), today), prev = wAvg(addDays(today, -13), addDays(today, -7));
+  const first = [...S.weights].sort((a, b) => a.date.localeCompare(b.date))[0];
+  const deadline = p.deadline || null;
+  const daysLeft = deadline ? Math.max(0, Math.round((fromKey(deadline) - fromKey(today)) / 864e5)) : null;
+  let rate = null, pct = null, proj = null, status = 'wait', advice = 'Weigh in every morning after the bathroom. The trend unlocks after 2 weeks of data.';
+  if (cur && prev && cur.n >= 3 && prev.n >= 3) {
+    rate = cur.v - prev.v; pct = (rate / prev.v) * 100;
+    if (daysLeft != null) proj = cur.v + rate * (daysLeft / 7);
+    const cutting = ['acut', 'cut'].includes(p.goal);
+    if (cutting) {
+      if (pct < -1.2) { status = 'fast'; advice = 'Losing too fast — muscle at risk. Add ~150 kcal of carbs on training days.'; }
+      else if (pct <= -0.5) { status = 'good'; advice = 'Right in the zone. Change nothing.'; }
+      else { status = 'slow'; advice = 'Slower than planned. Tighten logging first, then add 2k steps a day or drop 150 kcal.'; }
+    } else { status = 'good'; advice = 'Trend is tracking. Keep logging.'; }
+  }
+  // Adaptive maintenance (MacroFactor-style): intake minus energy stored/lost, over 14 days
+  let tdee = null;
+  const logged = Array.from({ length: 14 }, (_, i) => addDays(today, -i - 1)).filter(kk => S.days[kk]?.foods?.length);
+  if (logged.length >= 10 && rate != null) {
+    const avgIn = logged.reduce((a, kk) => a + totals(kk).kcal, 0) / logged.length;
+    tdee = Math.round((avgIn - (rate * 7700) / 7) / 10) * 10;
+  }
+  return { cur, first, rate, pct, proj, status, advice, daysLeft, deadline, tdee };
+}
+const MUSCLES = [
+  ['Chest', /bench|chest press|fly|dip|push-?up/i],
+  ['Back', /row|pulldown|pull-?up|chin/i],
+  ['Shoulders', /shoulder press|lateral|arnold|overhead press|face pull|rear delt/i],
+  ['Biceps', /curl(?!.*leg)|hammer/i],
+  ['Triceps', /tricep|pushdown|skull|dip|close.?grip/i],
+  ['Quads', /squat|leg press|leg extension|lunge|step|quad|wall sit|tke|terminal knee/i],
+  ['Hamstrings', /leg curl|romanian|rdl|hamstring|nordic/i],
+  ['Glutes', /hip thrust|bridge|abduction|glute|split squat|lunge/i],
+  ['Calves', /calf/i],
+  ['Core', /plank|crunch|core|dead bug|pallof|leg raise|ab wheel|hollow/i],
+];
+function muscleVolume(days = 7) {
+  const out = Object.fromEntries(MUSCLES.map(m => [m[0], 0]));
+  for (let i = 0; i < days; i++) {
+    const sets = S.days[addDays(dkey(), -i)]?.workout?.sets || {};
+    for (const [name, arr] of Object.entries(sets)) {
+      const n = (arr || []).filter(s => s.done).length;
+      if (!n) continue;
+      for (const [m, re] of MUSCLES) if (re.test(name)) out[m] += n;
+    }
+  }
+  return out;
+}
+function miniRing(pct, color, value, label, action) {
+  const R = 30, C = 2 * Math.PI * R, p = clamp(pct, 0, 1);
+  return `<button class="mring" data-action="${action}" aria-label="${esc(label)} ${esc(value)}">
+    <svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="7"/>
+    <circle cx="36" cy="36" r="${R}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}" transform="rotate(-90 36 36)"/></svg>
+    <span class="mv">${value}</span><span class="ml">${label}</span></button>`;
+}
+function greeting() { const h = new Date().getHours(); return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; }
+
 function renderHome() {
-  const k = dkey(), t = targets(), tot = totals(k), li = levelInfo(S.xp), rk = rankOf(li.lvl), st = stats(), qs = questList(k);
+  const k = dkey(), d = day(k), t = targets(), tot = totals(k), li = levelInfo(S.xp), rk = rankOf(li.lvl), st = stats(), qs = questList(k);
   const done = qs.filter(q => q.done).length, sk = streak();
   const late = new Date().getHours() >= 21 && done < 4;
   const ag = agenda(k).slice(0, 4);
-  const q = quoteOfDay();
+  const q = quoteOfDay(), rd = readiness(k), ct = cutTrend(), steps = d.steps || 0;
+  const zoneColor = rd ? { go: 'var(--green)', mid: 'var(--gold)', low: 'var(--red)' }[rd.zone] : 'var(--dim)';
+  const tk = tplKeyFor(k), tpl = template(tk);
   return `
-  <div class="panel sys">
-    <div class="row between"><span class="sys-tag">STATUS WINDOW</span><span class="sys-tag">${esc(fmtDate(k).toUpperCase())}</span></div>
-    <div class="status-head" style="margin-top:12px">
-      <div class="rank-badge ${rk.k}" aria-label="Rank ${rk.k}">${rk.k === 'N' ? 'NL' : rk.k}</div>
-      <div>
-        <div class="status-name">${esc(S.profile.name)}</div>
-        <div class="status-title">${esc(rk.title)}</div>
-        <div class="lvl">LEVEL <b>${li.lvl}</b></div>
-      </div>
+  <div class="hello">
+    <div><div class="hello-date">${esc(fmtDate(k))}</div><div class="hello-name">${greeting()}, ${esc(S.profile.name)}</div></div>
+    <div class="lvl-pill" aria-label="Level ${li.lvl}, ${rk.k} rank"><b>LV ${li.lvl}</b><span>${rk.k}-RANK</span></div>
+  </div>
+
+  <div class="panel sys today-card">
+    <div class="mrings">
+      ${miniRing(rd ? rd.score / 100 : 0, zoneColor, rd ? rd.score + '%' : '—', 'Readiness', 'open-checkin')}
+      ${miniRing(t.kcal ? tot.kcal / t.kcal : 0, tot.kcal > t.kcal * 1.1 ? 'var(--red)' : 'var(--accent)', r0(Math.max(0, t.kcal - tot.kcal)), 'kcal left', 'go-fuel')}
+      ${miniRing(steps / 10000, 'var(--blue)', steps >= 1000 ? r1(steps / 1000) + 'k' : steps, 'Steps', 'open-steps')}
     </div>
-    <div class="xp-line"><span>EXP</span><span>${li.into} / ${li.need}</span></div>${bar(li.into, li.need)}
-    <div class="stats">${Object.entries(st).map(([kk, v]) => `<div class="stat"><div class="k">${kk}</div><div class="v">${v}</div></div>`).join('')}</div>
-    <div class="row between" style="margin-top:12px">
-      <span class="chip ${sk ? 'on' : ''}">${ic('flame')} ${sk}-day streak</span>
-      <span class="chip">Quests ${done}/${qs.length}</span>
+    ${rd ? `<div class="ready-tip zone-${rd.zone}"><b>${rd.zone === 'go' ? 'PRIMED' : rd.zone === 'mid' ? 'STEADY' : 'RECOVER'}</b>${esc(rd.tip)}</div>`
+      : `<button class="btn primary block" style="margin-top:14px" data-action="open-checkin">${ic('moon')} Morning check-in · 20 seconds</button>`}
+    <div class="today-train" data-go="train" role="button" tabindex="0">
+      <span class="tmpl-ic">${ic(tk)}</span>
+      <div class="spacer"><div class="tt-k">${tk === 'rest' ? 'Rest day' : 'Today’s session'}</div><div class="tt-v">${esc(tpl.name)}${t.perKg ? ` · ${t.train ? 'Training day' : 'Light day'}` : ''}</div></div>
+      ${d.workout?.done ? `<span class="pill-note">CLEARED</span>` : ic('right')}
     </div>
   </div>
 
-  <div class="panel sys">
-    <div class="panel-title">Daily Quest <small>Become stronger</small></div>
+  ${ct.deadline || ['acut', 'cut'].includes(S.profile.goal) ? `
+  <div class="panel cut-card" data-action="go-body" role="button" tabindex="0">
+    <div class="panel-title">${S.profile.goal === 'acut' ? 'Aggressive cut' : 'Cut'} <small>${ct.daysLeft != null ? `${ct.daysLeft} days left` : ''}</small></div>
+    <div class="cut-row">
+      <div><div class="big-num">${ct.cur ? r1(ct.cur.v) : r1(S.profile.weight)}<span>kg</span></div><div class="ml">7-day average</div></div>
+      <div><div class="big-num ${ct.rate == null ? 'dim' : ''}">${ct.rate == null ? '—' : (ct.rate > 0 ? '+' : '') + r1(ct.rate)}<span>kg/wk</span></div><div class="ml">${ct.pct == null ? 'weekly rate' : r1(ct.pct) + '% / week'}</div></div>
+      <div><div class="big-num ${ct.proj == null ? 'dim' : ''}">${ct.proj == null ? (S.profile.targetWeight || '—') : r1(ct.proj)}<span>kg</span></div><div class="ml">${ct.proj == null ? 'target' : 'projected'}</div></div>
+    </div>
+    <div class="ready-tip zone-${{ fast: 'low', good: 'go', slow: 'mid', wait: 'none' }[ct.status]}"><b>${{ fast: 'TOO FAST', good: 'ON TRACK', slow: 'SLOW', wait: 'WEEKLY CHECK-IN' }[ct.status]}</b>${esc(ct.advice)}${ct.tdee ? ` Your real maintenance looks like ~${ct.tdee} kcal.` : ''}</div>
+  </div>` : ''}
+
+  <div class="panel">
+    <div class="panel-title">Daily quests <small>${done}/${qs.length} · ${sk ? `${sk}-day streak` : 'start a streak'}</small></div>
+    <div class="xp-line" style="margin-top:0"><span>EXP to level ${li.lvl + 1}</span><span>${li.into} / ${li.need}</span></div>${bar(li.into, li.need)}
+    <div style="margin-top:8px">
     ${qs.map(qu => `
-      <div class="quest ${qu.done ? 'done' : ''}" ${qu.manual ? `data-action="quest-toggle" data-id="${qu.id}" role="button" tabindex="0"` : qu.go ? `data-go="${qu.go}" role="button" tabindex="0"` : ''}>
+      <div class="quest ${qu.done ? 'done' : ''}" ${qu.manual ? `data-action="quest-toggle" data-id="${qu.id}" role="button" tabindex="0"` : qu.action ? `data-action="${qu.action}" role="button" tabindex="0"` : qu.go ? `data-go="${qu.go}" role="button" tabindex="0"` : ''}>
         <span class="qbox">${qu.done ? ic('check') : ''}</span>
         <div class="spacer"><div class="qname">${esc(qu.name)}</div>
-          ${qu.goal ? `<div class="qprog">${qu.cur} / ${qu.goal} ${qu.unit || ''}</div>` : qu.manual ? `<div class="qprog">Tap when done</div>` : ''}</div>
-        <span class="qxp">+${qu.xp} XP</span>
+          ${qu.goal ? `<div class="qprog">${qu.cur.toLocaleString('en')} / ${qu.goal.toLocaleString('en')} ${qu.unit || ''}</div>` : qu.manual ? `<div class="qprog">Tap when done</div>` : ''}</div>
+        <span class="qxp">+${qu.xp}</span>
       </div>`).join('')}
-    ${late ? `<div class="penalty"><b>WARNING · PENALTY ZONE</b>Fewer than 4 quests cleared and the day is almost over. Your streak is on the line.</div>` : ''}
+    </div>
+    ${late ? `<div class="penalty"><b>PENALTY ZONE</b>Fewer than 4 quests cleared and the day is almost over. Your streak is on the line.</div>` : ''}
   </div>
 
   ${quoteCard(q)}
-  <div class="row" style="margin:-6px 0 14px;justify-content:flex-end;gap:8px">
+  <div class="row" style="margin:-4px 0 12px;justify-content:flex-end;gap:8px">
     <button class="btn sm" data-action="quote-next">${ic('shuffle')} Another</button>
     <button class="btn sm" data-action="open-legends">Hall of Legends</button>
   </div>
 
   <div class="panel" data-go="fuel" role="button" tabindex="0">
-    <div class="panel-title">Fuel <small>${r0(tot.kcal)} / ${t.kcal} kcal</small></div>
-    ${bar(tot.kcal, t.kcal)}
-    <div class="grid3" style="margin-top:12px">
-      ${[['Protein', tot.p, t.p, 'p'], ['Carbs', tot.c, t.c, 'c'], ['Fat', tot.f, t.f, 'f']].map(([n, c, g, cl]) => `<div><div class="qprog">${n} ${r0(c)}/${g}g</div>${bar(c, g, cl)}</div>`).join('')}
+    <div class="panel-title">Macros <small>${r0(tot.kcal)} / ${t.kcal} kcal</small></div>
+    <div class="grid3">
+      ${[['Protein', tot.p, t.p, 'p'], ['Carbs', tot.c, t.c, 'c'], ['Fat', tot.f, t.f, 'f']].map(([n, c, g, cl]) => `<div><div class="macro-k">${n}</div><div class="macro-v">${r0(c)}<span>/${g}g</span></div>${bar(c, g, cl)}</div>`).join('')}
     </div>
   </div>
 
   <div class="panel">
-    <div class="panel-title">Today <small><button class="chip" data-go="plan">Full plan</button></small></div>
+    <div class="panel-title">Up next <small><button class="chip" data-go="plan">Full plan</button></small></div>
     ${ag.length ? ag.map(agendaRow).join('') : `<div class="empty">Nothing scheduled. Add your lectures and gym times in Plan.</div>`}
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Hunter stats <small>${esc(rk.title)}</small></div>
+    <div class="stats" style="margin-top:0">${Object.entries(st).map(([kk, v]) => `<div class="stat"><div class="k">${kk}</div><div class="v">${v}</div></div>`).join('')}</div>
   </div>`;
+}
+
+function openCheckin() {
+  const r = day().ready || { sleep: 7.5, q: 3, sore: 2, knee: 0, energy: 3 };
+  const five = [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']];
+  openSheet(`<h2>Morning check-in</h2><p class="muted small" style="margin-top:0">20 seconds. Sets today’s readiness and tells you how hard to push.</p>
+    <label for="ci_sleep">Hours slept</label><input id="ci_sleep" type="number" inputmode="decimal" step="0.5" value="${r.sleep}">
+    <label>Sleep quality <small class="muted">(1 bad · 5 great)</small></label>${seg('ci_q', five, r.q)}
+    <label>Muscle soreness <small class="muted">(1 none · 5 wrecked)</small></label>${seg('ci_sore', five, r.sore)}
+    <label>Knee pain right now</label>${seg('ci_knee', [[0, '0'], [2, '1-2'], [4, '3-4'], [6, '5-6'], [8, '7+']], r.knee)}
+    <label>Energy & mood <small class="muted">(1 flat · 5 on fire)</small></label>${seg('ci_energy', five, r.energy)}
+    <button class="btn primary block" style="margin-top:18px" data-action="checkin-save">Save check-in</button>`);
+}
+function openSteps() {
+  const s = day().steps || 0;
+  openSheet(`<h2>Steps</h2><p class="muted small" style="margin-top:0">Copy today’s number from the iPhone Health app. Goal: 10,000 every day — even on light days.</p>
+    <label for="st_n">Steps today</label><input id="st_n" type="number" inputmode="numeric" value="${s || ''}" placeholder="e.g. 8400">
+    <div class="chips" style="margin-top:10px">${[1000, 2000, 5000].map(n => `<button class="chip" data-action="steps-add" data-n="${n}">+${n / 1000}k</button>`).join('')}</div>
+    <button class="btn primary block" style="margin-top:18px" data-action="steps-save">Save</button>`);
 }
 
 /* ================= FUEL ================= */
@@ -801,10 +921,17 @@ function trainBody() {
   const last = ws[ws.length - 1];
   const ago = ws.find(w => w.date >= addDays(dkey(), -30));
   const tw = S.profile.targetWeight;
+  const mv = muscleVolume(7);
+  const zone = n => n === 0 ? 'z0' : n < 10 ? 'z1' : n <= 20 ? 'z2' : 'z3';
+  const heat = `<div class="panel"><div class="panel-title">Muscle volume <small>hard sets · last 7 days</small></div>
+    <div class="heat">${Object.entries(mv).map(([m, n]) => `<div class="heat-cell ${zone(n)}"><span class="hm">${m}</span><span class="hn">${n}</span></div>`).join('')}</div>
+    <div class="heat-legend"><span><i class="z1"></i>Under 10</span><span><i class="z2"></i>10–20 ideal</span><span><i class="z3"></i>20+ high</span></div>
+    <p class="small muted" style="margin-bottom:0">In a cut, keep each muscle in the 10–20 range to hold on to it. Your operated leg’s quads deserve the most.</p></div>`;
   return `<div class="panel sys"><div class="panel-title">Log body stats</div>
     <div class="grid2"><div><label for="bw">Weight kg</label><input id="bw" type="number" inputmode="decimal" value="${last?.kg || S.profile.weight}"></div>
     <div><label for="bwaist">Waist cm</label><input id="bwaist" type="number" inputmode="decimal" value="${last?.waist || ''}" placeholder="optional"></div></div>
     <button class="btn primary block" style="margin-top:12px" data-action="weight-save">Save today</button></div>
+  ${heat}
   <div class="panel"><div class="panel-title">Weight trend <small>${last ? `${last.kg} kg` : ''}${ago && last ? ` · ${(last.kg - ago.kg) >= 0 ? '+' : ''}${r1(last.kg - ago.kg)} kg in 30 days` : ''}</small></div>
     ${lineChart(ws.slice(-30).map(w => ({ label: w.date.slice(5), y: w.kg })), { unit: ' kg', target: tw || null })}</div>
   ${ws.some(w => w.waist) ? `<div class="panel"><div class="panel-title">Waist</div>${lineChart(ws.filter(w => w.waist).slice(-30).map(w => ({ label: w.date.slice(5), y: w.waist })), { unit: ' cm', color: '#a78bfa' })}</div>` : ''}
@@ -1123,6 +1250,19 @@ const A = {
     save(); go('home');
     queueToast('SYSTEM', 'You have become a Player.', `Welcome, ${p.name}`, 'levelup');
   },
+  'open-checkin': () => openCheckin(),
+  'checkin-save': () => {
+    const sleep = clamp(+val('ci_sleep') || 0, 0, 14);
+    day().ready = { sleep, q: +val('ci_q'), sore: +val('ci_sore'), knee: +val('ci_knee'), energy: +val('ci_energy') };
+    closeSheet(); evaluate(); render();
+    const rd = readiness();
+    toast('READINESS', `${rd.score}% — ${rd.zone === 'go' ? 'primed' : rd.zone === 'mid' ? 'steady' : 'recover'}`);
+  },
+  'open-steps': () => openSteps(),
+  'steps-add': el => { const i = $('#st_n'); i.value = (+i.value || 0) + +el.dataset.n; },
+  'steps-save': () => { day().steps = Math.max(0, Math.round(+val('st_n') || 0)); closeSheet(); evaluate(); render(); },
+  'go-fuel': () => go('fuel'),
+  'go-body': () => { trainTab = 'body'; go('train'); },
   'quest-toggle': el => { const d = day(); d.manual[el.dataset.id] = !d.manual[el.dataset.id]; evaluate(); render(); },
   'quote-next': () => { quoteShift++; render(); },
   // Fuel
