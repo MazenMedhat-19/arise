@@ -279,8 +279,8 @@ const WEEK_ORDER = [6, 0, 1, 2, 3, 4, 5]; // Saturday first
 
 const EVENT_TYPES = {
   uni: { label: 'University', color: '#7c5cff' },
-  gym: { label: 'Gym', color: '#2fd3ff' },
-  rehab: { label: 'Rehab', color: '#3dff9b' },
-  study: { label: 'Study', color: '#ffc94d' },
+  gym: { label: 'Gym', color: '#3df5a7' },
+  rehab: { label: 'Rehab', color: '#5ac8fa' },
+  study: { label: 'Study', color: '#ffd60a' },
   other: { label: 'Other', color: '#ff5c8a' },
 };

@@ -69,17 +69,32 @@ try { navigator.storage?.persist?.(); } catch (e) { /* ignore */ }
 /* ================= Targets ================= */
 const ACTIVITY = [[1.2, 'Desk — little movement'], [1.375, 'Light — 1-3 sessions/week'], [1.55, 'Moderate — 3-5 sessions/week'], [1.725, 'Very active — 6-7 sessions/week']];
 const GOALS = {
+  acut: { label: 'Aggressive', perKg: { p: 2.4, f: 0.6, cTrain: 2.3, cLight: 1.4 } },
   cut: { label: 'Cut', d: -450, pk: 2.2 },
   recomp: { label: 'Recomp', d: -150, pk: 2.0 },
   maintain: { label: 'Maintain', d: 0, pk: 1.8 },
   bulk: { label: 'Lean bulk', d: 250, pk: 1.8 },
 };
-function targets() {
+function isTrainDay(k = dkey()) {
+  const d = S.days[k];
+  if (d && typeof d.train === 'boolean') return d.train;
+  if (d?.workout?.sets && Object.keys(d.workout.sets).length) return true;
+  return tplKeyFor(k) !== 'rest';
+}
+function targets(k = dkey()) {
   const p = S.profile;
   if (!p) return { kcal: 2200, p: 150, c: 220, f: 70, water: 12, bmr: 0, tdee: 0 };
   const bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'f' ? -161 : 5);
   const tdee = bmr * p.activity;
   const g = GOALS[p.goal] || GOALS.maintain;
+  if (g.perKg) {
+    const w = p.weight, train = isTrainDay(k), o = p.override || {};
+    const pr = +o.p || Math.round(w * g.perKg.p), f = +o.f || Math.round(w * g.perKg.f);
+    const c = +o.c || Math.round(w * (train ? g.perKg.cTrain : g.perKg.cLight));
+    const kcal = +o.kcal || Math.round((pr * 4 + c * 4 + f * 9) / 10) * 10;
+    const water = Math.max(8, Math.round((w * 35) / 250));
+    return { kcal, p: pr, c, f, water, bmr: Math.round(bmr), tdee: Math.round(tdee), train, perKg: true };
+  }
   let kcal = Math.round((tdee + g.d) / 10) * 10;
   let pr = Math.round(p.weight * g.pk);
   let f = Math.round(p.weight * 0.8);
@@ -158,7 +173,7 @@ const RANKS = [[50, 'N', 'National Level Hunter'], [38, 'S', 'Shadow Monarch'], 
 function rankOf(l) { const r = RANKS.find(x => l >= x[0]); return { k: r[1], title: r[2] }; }
 
 function questList(k = dkey()) {
-  const d = day(k), t = targets(), tot = totals(k), info = aclInfo(), q = [];
+  const d = day(k), t = targets(k), tot = totals(k), info = aclInfo(), q = [];
   const meals = new Set(d.foods.map(f => f.meal)).size;
   q.push({ id: 'meals', name: 'Log 3 meals', ic: 'bolt', xp: 30, cur: Math.min(meals, 3), goal: 3, done: meals >= 3 });
   q.push({ id: 'protein', name: 'Hit protein target', ic: 'bolt', xp: 50, cur: r0(tot.p), goal: t.p, unit: 'g', done: tot.p >= t.p * 0.9 });
@@ -293,12 +308,12 @@ function ring(cur, goal) {
   const R = 56, C = 2 * Math.PI * R, pct = goal ? clamp(cur / goal, 0, 1) : 0;
   const left = goal - cur, over = left < 0;
   return `<div class="ring"><svg viewBox="0 0 132 132" aria-hidden="true">
-    <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b82ff"/><stop offset="1" stop-color="#2fd3ff"/></linearGradient></defs>
-    <circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(90,170,255,.12)" stroke-width="10"/>
-    <circle cx="66" cy="66" r="${R}" fill="none" stroke="${over ? '#ff4d6d' : 'url(#rg)'}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}" style="filter:drop-shadow(0 0 6px ${over ? '#ff4d6d' : '#2fd3ff'})"/>
+    <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3df5a7"/><stop offset="1" stop-color="#3df5a7"/></linearGradient></defs>
+    <circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"/>
+    <circle cx="66" cy="66" r="${R}" fill="none" stroke="${over ? '#ff453a' : 'url(#rg)'}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}" />
   </svg><div class="center"><div class="num">${r0(Math.abs(left))}</div><div class="lbl">${over ? 'KCAL OVER' : 'KCAL LEFT'}</div></div></div>`;
 }
-function lineChart(pts, { unit = '', color = '#2fd3ff', target = null } = {}) {
+function lineChart(pts, { unit = '', color = '#3df5a7', target = null } = {}) {
   if (pts.length < 2) return `<div class="empty">Log at least two entries to see the trend.</div>`;
   const W = 340, H = 140, P = 26;
   const ys = pts.map(p => p.y).concat(target != null ? [target] : []);
@@ -312,7 +327,7 @@ function lineChart(pts, { unit = '', color = '#2fd3ff', target = null } = {}) {
   const last = pts[pts.length - 1];
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Trend chart">
     <defs><linearGradient id="lg${color.slice(1)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".3"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
-    ${target != null ? `<line x1="${P}" x2="${W - P}" y1="${y(target)}" y2="${y(target)}" stroke="#ffc94d" stroke-dasharray="4 4" stroke-width="1"/><text x="${W - P}" y="${y(target) - 4}" text-anchor="end">target ${target}${unit}</text>` : ''}
+    ${target != null ? `<line x1="${P}" x2="${W - P}" y1="${y(target)}" y2="${y(target)}" stroke="#8e8e93" stroke-dasharray="4 4" stroke-width="1"/><text x="${W - P}" y="${y(target) - 4}" text-anchor="end">target ${target}${unit}</text>` : ''}
     <path d="${area}" fill="url(#lg${color.slice(1)})"/>
     <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>
     <circle cx="${x(pts.length - 1)}" cy="${y(last.y)}" r="4" fill="${color}"/>
@@ -324,10 +339,10 @@ function barChart(vals, target) {
   const bw = (W - P * 2) / vals.length;
   const y = v => H - P - (v / max) * (H - P * 2);
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calories, last 7 days">
-    <line x1="${P}" x2="${W - P}" y1="${y(target)}" y2="${y(target)}" stroke="#ffc94d" stroke-dasharray="4 4"/>
+    <line x1="${P}" x2="${W - P}" y1="${y(target)}" y2="${y(target)}" stroke="#8e8e93" stroke-dasharray="4 4"/>
     ${vals.map((v, i) => {
       const hit = v.y >= target * 0.9 && v.y <= target * 1.1;
-      return `<rect x="${P + i * bw + bw * 0.2}" y="${y(v.y)}" width="${bw * 0.6}" height="${Math.max(0, H - P - y(v.y))}" rx="4" fill="${v.y > target * 1.1 ? '#ff4d6d' : hit ? '#3dff9b' : '#3b82ff'}" opacity="${v.y ? 0.9 : 0.25}"/>
+      return `<rect x="${P + i * bw + bw * 0.2}" y="${y(v.y)}" width="${bw * 0.6}" height="${Math.max(0, H - P - y(v.y))}" rx="4" fill="${v.y > target * 1.1 ? '#ff453a' : hit ? '#3df5a7' : '#3a3b40'}" opacity="${v.y ? 0.9 : 0.25}"/>
       <text x="${P + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${v.label}</text>`;
     }).join('')}
   </svg>`;
@@ -377,7 +392,8 @@ function renderOnboarding() {
   return `<div class="onboard-hero"><div class="sys-msg">[ SYSTEM ] YOU HAVE BEEN CHOSEN</div><h1>ARISE</h1>
     <p>The System needs your data to build your quests, your fuel targets and your recovery arc.</p></div>
     <div class="panel sys">${profileForm()}
-    <button class="btn primary block" style="margin-top:18px" data-action="ob-submit">Accept the System</button></div>`;
+    <button class="btn primary block" style="margin-top:18px" data-action="ob-submit">Accept the System</button></div>
+    <label class="btn block" style="margin:0 0 24px;color:var(--text);font-size:15px;text-transform:none;letter-spacing:0">${ic('download')} Restore from backup file<input type="file" accept="application/json,.json" data-change="import" hidden></label>`;
 }
 
 /* ================= HOME ================= */
@@ -452,7 +468,7 @@ function renderHome() {
 const MEALS = [{ id: 'breakfast', label: 'Breakfast' }, { id: 'lunch', label: 'Lunch' }, { id: 'dinner', label: 'Dinner' }, { id: 'snacks', label: 'Snacks' }];
 let fuelDate = dkey();
 function renderFuel() {
-  const k = fuelDate, d = day(k), t = targets(), tot = totals(k);
+  const k = fuelDate, d = day(k), t = targets(k), tot = totals(k);
   const last7 = Array.from({ length: 7 }, (_, i) => { const kk = addDays(dkey(), i - 6); return { label: DAY_NAMES[fromKey(kk).getDay()].slice(0, 2), y: r0(S.days[kk] ? totals(kk).kcal : 0) }; });
   return `
   <div class="row between" style="margin-bottom:12px">
@@ -499,7 +515,8 @@ function renderFuel() {
       <div class="kpi"><div class="v">${t.c} g</div><div class="k">CARBS</div></div>
       <div class="kpi"><div class="v">${t.f} g</div><div class="k">FAT</div></div>
     </div>
-    <p class="small muted">BMR ${t.bmr} · Maintenance ≈ ${t.tdee} kcal · Goal: ${GOALS[S.profile.goal]?.label}. Change it in Settings.</p>
+    ${t.perKg ? `<label>Today is</label><div class="seg"><button type="button" data-action="fuel-daytype" data-v="1" class="${t.train ? 'on' : ''}">Training day</button><button type="button" data-action="fuel-daytype" data-v="0" class="${t.train ? '' : 'on'}">Light day</button></div>
+    <p class="small muted" style="margin-top:12px">Aggressive cut · per kg: P 2.4 · F 0.6 · C ${t.train ? '2.3 (training)' : '1.4 (light)'} · Maintenance ≈ ${t.tdee} kcal. Hit protein every day, aim for 10k+ steps.</p>` : `<p class="small muted">BMR ${t.bmr} · Maintenance ≈ ${t.tdee} kcal · Goal: ${GOALS[S.profile.goal]?.label}. Change it in Settings.</p>`}
     <button class="btn primary block" data-action="diet-plan">Show my meal plan</button>
   </div>`;
 }
@@ -523,7 +540,7 @@ function fsPreview() {
   if (!FS) return;
   const g = +($('#fs_g')?.value) || 0, m = calc(FS.food, g);
   const el = $('#fs_prev');
-  if (el) el.innerHTML = [['kcal', m.kcal, '#e6f1ff'], ['protein', m.p, 'var(--p)'], ['carbs', m.c, 'var(--c)'], ['fat', m.f, 'var(--f)']].map(([k2, v, c]) => `<div class="mp"><div class="v" style="color:${c}">${k2 === 'kcal' ? r0(v) : r1(v)}</div><div class="k">${k2.toUpperCase()}</div></div>`).join('');
+  if (el) el.innerHTML = [['kcal', m.kcal, '#f5f5f7'], ['protein', m.p, 'var(--p)'], ['carbs', m.c, 'var(--c)'], ['fat', m.f, 'var(--f)']].map(([k2, v, c]) => `<div class="mp"><div class="v" style="color:${c}">${k2 === 'kcal' ? r0(v) : r1(v)}</div><div class="k">${k2.toUpperCase()}</div></div>`).join('');
 }
 function addRecent(food) {
   const f = { name: food.name, ar: food.ar, kcal: food.kcal, p: food.p, c: food.c, f: food.f, srv: food.srv, code: food.code, src: food.src };
@@ -790,7 +807,7 @@ function trainBody() {
     <button class="btn primary block" style="margin-top:12px" data-action="weight-save">Save today</button></div>
   <div class="panel"><div class="panel-title">Weight trend <small>${last ? `${last.kg} kg` : ''}${ago && last ? ` · ${(last.kg - ago.kg) >= 0 ? '+' : ''}${r1(last.kg - ago.kg)} kg in 30 days` : ''}</small></div>
     ${lineChart(ws.slice(-30).map(w => ({ label: w.date.slice(5), y: w.kg })), { unit: ' kg', target: tw || null })}</div>
-  ${ws.some(w => w.waist) ? `<div class="panel"><div class="panel-title">Waist</div>${lineChart(ws.filter(w => w.waist).slice(-30).map(w => ({ label: w.date.slice(5), y: w.waist })), { unit: ' cm', color: '#7c5cff' })}</div>` : ''}
+  ${ws.some(w => w.waist) ? `<div class="panel"><div class="panel-title">Waist</div>${lineChart(ws.filter(w => w.waist).slice(-30).map(w => ({ label: w.date.slice(5), y: w.waist })), { unit: ' cm', color: '#a78bfa' })}</div>` : ''}
   <div class="panel"><div class="panel-title">Personal records</div>
     ${Object.entries(S.prs).length ? Object.entries(S.prs).sort((a, b) => b[1].e - a[1].e).map(([n, p]) => `<div class="food"><div class="spacer"><div class="nm">${esc(n)}</div><div class="mt">${esc(p.date)}</div></div><span class="kc">${p.w} kg × ${p.r}</span></div>`).join('') : `<div class="empty">Complete sets with a weight to start recording PRs.</div>`}</div>`;
 }
@@ -868,7 +885,7 @@ function renderRehab() {
   </div>
 
   <div class="panel"><div class="panel-title">Range of motion <small>flexion °</small></div>
-    ${lineChart(roms.map(([kk, x]) => ({ label: kk.slice(5), y: +x.knee.flex })), { unit: '°', color: '#3dff9b', target: info.idx < 2 ? (info.idx < 1 ? 90 : 120) : 135 })}</div>
+    ${lineChart(roms.map(([kk, x]) => ({ label: kk.slice(5), y: +x.knee.flex })), { unit: '°', color: '#3df5a7', target: info.idx < 2 ? (info.idx < 1 ? 90 : 120) : 135 })}</div>
 
   <div class="panel"><div class="panel-title">Arc goals</div><ul class="list">${ph.goals.map(g => `<li>${esc(g)}</li>`).join('')}</ul>
     <div class="hr"></div><div class="panel-title" style="color:var(--green)">To unlock the next arc</div><ul class="list">${ph.exit.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>
@@ -902,7 +919,7 @@ function agendaRow(i) {
   const now = new Date(), nm = now.getHours() * 60 + now.getMinutes();
   const isNow = i.time && i.end && toMin(i.time) <= nm && nm < toMin(i.end);
   const attrs = i.id ? `data-action="ev-edit" data-id="${i.id}" role="button" tabindex="0"` : i.go ? `data-go="${i.go}" role="button" tabindex="0"` : '';
-  return `<div class="agenda-item ${isNow ? 'now' : ''}" ${attrs} style="--ev:${EVENT_TYPES[i.type]?.color || '#2fd3ff'}">
+  return `<div class="agenda-item ${isNow ? 'now' : ''}" ${attrs} style="--ev:${EVENT_TYPES[i.type]?.color || '#3df5a7'}">
     <div class="agenda-time">${i.time || '—'}${i.end ? `<br><span class="muted">${i.end}</span>` : ''}</div><span class="agenda-bar"></span>
     <div class="spacer"><div class="nm">${esc(i.title)}${isNow ? ' <span class="pill-note">NOW</span>' : ''}</div><div class="sub">${esc(i.sub || '')}</div></div></div>`;
 }
@@ -1109,6 +1126,7 @@ const A = {
   'quest-toggle': el => { const d = day(); d.manual[el.dataset.id] = !d.manual[el.dataset.id]; evaluate(); render(); },
   'quote-next': () => { quoteShift++; render(); },
   // Fuel
+  'fuel-daytype': el => { day(fuelDate).train = el.dataset.v === '1'; save(); evaluate(); render(); },
   'fuel-date': el => { const n = +el.dataset.d; const k = addDays(fuelDate, n); if (k <= dkey()) { fuelDate = k; render(); } },
   'open-scan': () => openScan(),
   'open-search': el => openSearch(el.dataset.meal),
