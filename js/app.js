@@ -165,6 +165,9 @@ function template(key) {
   const info = aclInfo();
   if (!info || info.idx >= 3) {
     const ex = (key === 'lower2' ? LEG_B : LEG_A).slice();
+    if (info?.a?.graft === 'peroneus') ex.push(key === 'lower2'
+      ? ['Single-leg calf raise — operated side', 3, '12-15', 60, 'Peroneus graft: rebuild the ankle that donated the tendon. Slow up, slow down.']
+      : ['Band ankle eversion — operated side', 3, '15-20', 45, 'Peroneus graft: turn the foot out against a band. Keeps the ankle stable for cutting.']);
     if (info?.idx >= 3) ex.push(['Bike — easy flush', 1, '8-10 min', 0, 'Easy spin to finish. Keeps the knee happy.']);
     return { ...t, ex, sub: info ? `${info.phase.arc} · ${key === 'lower2' ? 'strength + control' : 'quad strength'}` : 'Legs · Glutes' };
   }
@@ -424,7 +427,7 @@ function profileForm(p = {}) {
   </select>
   <label for="pf_date">Surgery date (or injury date if no surgery)</label><input id="pf_date" type="date" value="${esc(a.date || '')}">
   <label for="pf_graft">Graft type</label>
-  <select id="pf_graft">${[['unknown', "Don't know"], ['patellar', 'Patellar tendon (BTB)'], ['hamstring', 'Hamstring'], ['quad', 'Quadriceps tendon'], ['allograft', 'Donor (allograft)']].map(([v, l]) => `<option value="${v}" ${a.graft === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  <select id="pf_graft">${[['unknown', "Don't know"], ['patellar', 'Patellar tendon (BTB)'], ['hamstring', 'Hamstring'], ['quad', 'Quadriceps tendon'], ['peroneus', 'Peroneus longus (from the ankle)'], ['allograft', 'Donor (allograft)']].map(([v, l]) => `<option value="${v}" ${a.graft === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
 }
 function readProfileForm(prev = {}) {
   const p = {
@@ -1152,6 +1155,7 @@ function renderRehab() {
     <div style="margin-top:6px">${ph.ex.map(e => `<div class="check ${d.rehab.done.includes(e.id) ? 'done' : ''}" data-action="rehab-toggle" data-id="${e.id}" role="button" tabindex="0">
       <span class="qbox">${d.rehab.done.includes(e.id) ? ic('check') : ''}</span>
       <div><div class="nm">${esc(e.n)}</div><div class="ds">${esc(e.d)}</div>${e.cue ? `<div class="cu">${esc(e.cue)}</div>` : ''}</div></div>`).join('')}</div>
+    ${info.a.graft === 'peroneus' ? `<div class="ready-tip zone-go"><b>PERONEUS LONGUS GRAFT</b>Your hamstrings and quads weren’t cut — good news for strength. The donor ankle needs its own work: band eversion, single-leg calf raises and balance. ARISE adds them to your leg days.</div>` : ''}
     ${info.a.graft === 'hamstring' && info.idx <= 1 ? `<div class="penalty" style="border-color:rgba(255,201,77,.4);background:rgba(255,201,77,.08);color:#ffe3a3"><b style="color:var(--gold)">HAMSTRING GRAFT</b>Avoid loaded hamstring curls for the first 6-8 weeks unless your physio says otherwise.</div>` : ''}
   </div>
 
