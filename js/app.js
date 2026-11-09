@@ -447,16 +447,254 @@ function renderOnboarding() {
     <label class="btn block" style="margin:0 0 24px;color:var(--text);font-size:15px;text-transform:none;letter-spacing:0">${ic('download')} Restore from backup file<input type="file" accept="application/json,.json" data-change="import" hidden></label>`;
 }
 
+
+/* ================= Week helpers ================= */
+const weekStart = (k = dkey()) => addDays(k, -((fromKey(k).getDay() - 6 + 7) % 7)); // Saturday
+const weekDays = (k = dkey()) => Array.from({ length: 7 }, (_, i) => addDays(weekStart(k), i));
+
+/* ================= Theme ================= */
+function applyTheme() {
+  const t = S.settings?.theme || 'black';
+  document.documentElement.dataset.theme = t;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = '#000000';
+}
+
+/* ================= Boss fights (weekly) ================= */
+const BOSSES = [
+  { id: 'warden', name: 'The Protein Warden', title: 'Keeper of the Iron Gate', goal: 6, unit: 'days hitting protein',
+    calc: ws => ws.filter(k => S.days[k] && totals(k).p >= targets(k).p * 0.9).length },
+  { id: 'colossus', name: 'The Leg-Day Colossus', title: 'Guardian of the Broken Knee', goal: 2, unit: 'leg days cleared',
+    calc: ws => ws.filter(k => ['lower', 'lower2'].includes(S.days[k]?.workout?.tpl) && S.days[k]?.workout?.done).length },
+  { id: 'serpent', name: 'The Step Serpent', title: 'Coiled Around the Campus', goal: 70000, unit: 'steps',
+    calc: ws => ws.reduce((a, k) => a + (S.days[k]?.steps || 0), 0) },
+  { id: 'night', name: 'The Night Knight', title: 'Lord of Lost Sleep', goal: 5, unit: 'nights of 7h+ sleep',
+    calc: ws => ws.filter(k => ((S.days[k]?.band?.sleep) || (S.days[k]?.ready?.sleep) || 0) >= 7).length },
+  { id: 'ledger', name: 'The Ledger Wraith', title: 'Devourer of Unlogged Meals', goal: 6, unit: 'days with 3 meals logged',
+    calc: ws => ws.filter(k => new Set((S.days[k]?.foods || []).map(f => f.meal)).size >= 3).length },
+  { id: 'gatekeeper', name: 'The Gatekeeper of Iron', title: 'Warden of Five Gates', goal: 5, unit: 'workouts cleared',
+    calc: ws => ws.filter(k => S.days[k]?.workout?.done).length },
+];
+function bossOfWeek(k = dkey()) {
+  const n = Math.floor(fromKey(weekStart(k)).getTime() / (7 * 864e5));
+  const b = BOSSES[((n % BOSSES.length) + BOSSES.length) % BOSSES.length];
+  const ws = weekDays(k), cur = b.calc(ws), pct = clamp(cur / b.goal, 0, 1);
+  return { ...b, cur, pct, hp: Math.round((1 - pct) * 100), week: weekStart(k), slain: pct >= 1, claimed: !!S.bosses?.[weekStart(k)] };
+}
+function bossEmblem(id) {
+  const P = {
+    warden: '<path d="M32 6 54 16v14c0 14-9 24-22 28C19 54 10 44 10 30V16Z"/><path d="M22 30h20M32 20v20"/>',
+    colossus: '<path d="M20 58V34l-6-8 8-16h20l8 16-6 8v24"/><circle cx="26" cy="22" r="2"/><circle cx="38" cy="22" r="2"/><path d="M26 34h12"/>',
+    serpent: '<path d="M12 46c8 8 20 8 24 0s-4-14 4-20 16 2 14 10"/><circle cx="50" cy="30" r="2"/><path d="M8 48l6-4"/>',
+    night: '<path d="M40 10a22 22 0 1 0 14 34A18 18 0 0 1 40 10Z"/><path d="M18 40l4-4 4 4-4 4Z"/>',
+    ledger: '<path d="M16 8h26l8 8v40H16Z"/><path d="M22 24h20M22 32h20M22 40h12"/><path d="M42 8v8h8"/>',
+    gatekeeper: '<path d="M14 58V22l18-14 18 14v36"/><path d="M24 58V34h16v24"/><path d="M14 30h36"/>',
+  };
+  return `<svg class="boss-emblem" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[id] || P.gatekeeper}</svg>`;
+}
+function bossCard() {
+  const b = bossOfWeek();
+  const left = Math.max(0, b.goal - b.cur);
+  return `<div class="panel boss-card ${b.slain ? 'slain' : ''}">
+    <div class="boss-top">${bossEmblem(b.id)}
+      <div class="spacer"><div class="boss-k">Weekly boss · ends Friday</div><div class="boss-n">${esc(b.name)}</div><div class="boss-t">${esc(b.title)}</div></div></div>
+    <div class="boss-hp"><i style="width:${b.hp}%"></i></div>
+    <div class="row between small" style="margin-top:6px"><span class="muted">${b.unit === 'steps' ? b.cur.toLocaleString('en') : b.cur} / ${b.unit === 'steps' ? b.goal.toLocaleString('en') : b.goal} ${esc(b.unit)}</span><span class="boss-hpn">${b.slain ? 'DEFEATED' : `HP ${b.hp}%`}</span></div>
+    ${b.slain && !b.claimed ? `<button class="btn primary block" style="margin-top:12px" data-action="boss-claim">Claim victory · +300 XP</button>`
+      : b.slain ? `<div class="ready-tip zone-go"><b>ENEMY FELLED</b>Reward claimed. A new boss rises on Saturday.</div>`
+      : `<div class="small muted" style="margin-top:6px">${b.unit === 'steps' ? left.toLocaleString('en') : left} more to bring it down.</div>`}
+  </div>`;
+}
+
+/* ================= University attendance ================= */
+// A schedule event of type "uni" can carry subject + kind (Lecture / Section).
+function uniSubjects() {
+  const map = {};
+  for (const e of S.schedule.filter(x => x.type === 'uni')) {
+    const name = (e.subject || e.title).trim();
+    if (!map[name]) map[name] = { name, events: [] };
+    map[name].events.push(e);
+  }
+  const weeks = S.uni?.termWeeks || 14, rule = S.uni?.rule ?? 0.25;
+  return Object.values(map).map(m => {
+    const perWeek = m.events.reduce((a, e) => a + e.days.length, 0);
+    const total = weeks * perWeek;
+    return { ...m, perWeek, total, limit: S.uni?.limits?.[m.name] ?? Math.floor(total * rule), base: S.uni?.base?.[m.name] || 0 };
+  }).sort((a, b) => (b.base / (b.limit || 1)) - (a.base / (a.limit || 1)));
+}
+const attKey = (k, id) => `${k}|${id}`;
+function attStats(sub) {
+  const ids = new Set(sub.events.map(e => e.id)), byKind = { Lecture: { a: 0, p: 0 }, Section: { a: 0, p: 0 } };
+  for (const [key, v] of Object.entries(S.attend || {})) {
+    const id = key.split('|')[1];
+    if (!ids.has(id)) continue;
+    const ev = sub.events.find(e => e.id === id), kind = ev?.kind === 'Section' ? 'Section' : 'Lecture';
+    if (v === 'absent') byKind[kind].a++; else if (v === 'present') byKind[kind].p++;
+  }
+  return byKind;
+}
+function attendButtons(k, id) {
+  const v = S.attend?.[attKey(k, id)];
+  return `<span class="att">
+    <button class="att-b ${v === 'present' ? 'on ok' : ''}" data-action="att" data-k="${k}" data-id="${id}" data-v="present" aria-label="Attended">${ic('check')}</button>
+    <button class="att-b ${v === 'absent' ? 'on bad' : ''}" data-action="att" data-k="${k}" data-id="${id}" data-v="absent" aria-label="Absent">${ic('x')}</button></span>`;
+}
+function planUni() {
+  const subs = uniSubjects(), k = dkey();
+  const exams = (S.exams || []).filter(x => x.date >= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const past = (S.exams || []).filter(x => x.date < k).slice(-4);
+  const daysTo = d => Math.round((fromKey(d) - fromKey(k)) / 864e5);
+  return `<div class="panel sys"><div class="panel-title">Midterms & exams <small><button class="chip" data-action="exam-new">${ic('plus')} Add</button></small></div>
+    ${exams.length ? exams.map(x => `<div class="exam-row" data-action="exam-edit" data-id="${x.id}" role="button" tabindex="0">
+      <div class="exam-d"><b>${daysTo(x.date) === 0 ? 'TODAY' : daysTo(x.date)}</b><span>${daysTo(x.date) === 0 ? '' : daysTo(x.date) === 1 ? 'day' : 'days'}</span></div>
+      <div class="spacer"><div class="nm">${esc(x.subject)}</div><div class="sub">${esc(fmtDate(x.date))}${x.time ? ` · ${esc(x.time)}` : ''}${x.loc ? ` · ${esc(x.loc)}` : ''}</div></div>${ic('right')}</div>`).join('')
+      : `<div class="empty">No exams added yet. Send your midterm table and they land here with a countdown.</div>`}
+    ${past.length ? `<div class="small muted" style="margin-top:8px">Done: ${past.map(x => esc(x.subject)).join(' · ')}</div>` : ''}</div>
+  <div class="panel"><div class="panel-title">Attendance <small>25% rule · tap a count to fix it</small></div>
+    ${subs.length ? subs.map(sub => {
+      const st = attStats(sub), abs = sub.base + st.Lecture.a + st.Section.a, left = sub.limit - abs;
+      const risk = left <= 0 ? 'late' : left <= 3 ? 'soon' : '';
+      return `<div class="att-sub">
+        <div class="row between"><div class="nm">${esc(sub.name)}</div><button class="due ${risk}" data-action="att-base" data-s="${esc(sub.name)}">${abs} / ${sub.limit} absences</button></div>
+        <div class="small muted">${sub.perWeek} sessions/week · ~${sub.total} this term · ${Math.max(0, left)} absence${left === 1 ? '' : 's'} left before the 25% ban</div>
+        ${bar(abs, sub.limit, risk ? 'p' : 'c')}
+        ${risk === 'late' ? `<div class="penalty" style="margin-top:8px"><b>NO ABSENCES LEFT</b>One more and you can be barred from the ${esc(sub.name.split(' ·')[0])} final. Attend every session.</div>` : risk === 'soon' ? `<div class="small" style="color:var(--orange);margin-top:6px">Danger zone — treat every session as mandatory.</div>` : ''}
+      </div>`;
+    }).join('') : `<div class="empty">Add your lectures and sections in Week (type: University, with the subject name) and attendance tracking starts automatically.</div>`}
+  </div>
+  <div class="panel"><div class="panel-title">This week</div>
+    ${weekDays().map(dk => {
+      const wd = fromKey(dk).getDay(), evs = S.schedule.filter(e => e.type === 'uni' && e.days.includes(wd)).sort((a, b) => toMin(a.start) - toMin(b.start));
+      if (!evs.length) return '';
+      return `<div class="week-day ${dk === k ? 'today' : ''}"><h4><span>${DAY_NAMES[wd].toUpperCase()} · ${esc(fmtDate(dk))}</span></h4>
+        ${evs.map(e => `<div class="agenda-item"><div class="agenda-time">${e.start}</div><span class="agenda-bar" style="--ev:${EVENT_TYPES.uni.color}"></span>
+          <div class="spacer"><div class="nm">${esc(e.subject || e.title)}</div><div class="sub">${esc(e.kind || 'Lecture')}${e.loc ? ' · ' + esc(e.loc) : ''}</div></div>${dk <= k ? attendButtons(dk, e.id) : ''}</div>`).join('')}</div>`;
+    }).join('') || `<div class="empty">No university sessions this week.</div>`}
+  </div>`;
+}
+function openExam(id) {
+  const x = (S.exams || []).find(e => e.id === id) || { subject: '', date: dkey(), time: '', loc: '' };
+  openSheet(`<h2>${id ? 'Edit' : 'New'} exam</h2>
+    <label for="ex_s">Subject</label><input id="ex_s" value="${esc(x.subject)}" placeholder="e.g. Anatomy midterm">
+    <div class="grid2"><div><label for="ex_d">Date</label><input id="ex_d" type="date" value="${esc(x.date)}"></div><div><label for="ex_t">Time</label><input id="ex_t" type="time" value="${esc(x.time)}"></div></div>
+    <label for="ex_l">Place</label><input id="ex_l" value="${esc(x.loc)}" placeholder="Hall / building">
+    <button class="btn primary block" style="margin-top:16px" data-action="exam-save" data-id="${id || ''}">Save</button>
+    ${id ? `<button class="btn danger block" style="margin-top:8px" data-action="exam-del" data-id="${id}">Delete</button>` : ''}`);
+}
+
+/* ================= Progress photos (IndexedDB, phone only) ================= */
+const PH = {
+  db: null,
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('arise-photos', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('p', { keyPath: 'id' });
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async all() { const db = await this.open(); return new Promise(res => { const q = db.transaction('p').objectStore('p').getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); }); },
+  async put(o) { const db = await this.open(); return new Promise(res => { const t = db.transaction('p', 'readwrite'); t.objectStore('p').put(o); t.oncomplete = res; }); },
+  async del(id) { const db = await this.open(); return new Promise(res => { const t = db.transaction('p', 'readwrite'); t.objectStore('p').delete(id); t.oncomplete = res; }); },
+};
+let photoPose = 'front', photoUrls = [];
+function shrink(file, max = 1080) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res(b) : rej(new Error('encode')), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Could not read the photo')); };
+    img.src = url;
+  });
+}
+async function openPhotos() {
+  photoUrls.forEach(u => URL.revokeObjectURL(u)); photoUrls = [];
+  let list = [];
+  try { list = (await PH.all()).filter(p => p.pose === photoPose).sort((a, b) => a.date.localeCompare(b.date)); } catch (e) { /* private mode */ }
+  const url = b => { const u = URL.createObjectURL(b); photoUrls.push(u); return u; };
+  const first = list[0], last = list[list.length - 1];
+  openSheet(`<h2>Progress photos</h2><p class="small muted" style="margin-top:0">Stored only on this phone. Same spot, same light, same time of day — once a week.</p>
+    <div class="seg" style="margin-bottom:12px">${[['front', 'Front'], ['side', 'Side'], ['back', 'Back']].map(([k, l]) => `<button class="${photoPose === k ? 'on' : ''}" data-action="photo-pose" data-p="${k}">${l}</button>`).join('')}</div>
+    <label class="btn primary block" style="margin:0 0 14px;color:var(--accent-ink);text-transform:none;letter-spacing:0">${ic('plus')} Add ${photoPose} photo<input type="file" accept="image/*" data-change="photo-add" hidden></label>
+    ${list.length >= 2 ? `<div class="cmp" style="--pos:50%">
+        <img src="${url(last.blob)}" alt="${esc(last.date)}"><div class="cmp-top"><img src="${url(first.blob)}" alt="${esc(first.date)}"></div>
+        <span class="cmp-l">${esc(fmtDate(first.date))}</span><span class="cmp-r">${esc(fmtDate(last.date))}</span><i class="cmp-line"></i>
+        <input class="cmp-range" type="range" min="0" max="100" value="50" aria-label="Compare before and after"></div>
+      <p class="small muted" style="text-align:center;margin:6px 0 14px">Drag to compare first vs latest.</p>` : list.length === 1 ? `<p class="small muted">One photo saved. Add another next week to unlock the before / after slider.</p>` : ''}
+    <div class="ph-grid">${list.slice().reverse().map(p => `<div class="ph"><img src="${url(p.blob)}" alt="${esc(p.date)}" loading="lazy"><span>${esc(fmtDate(p.date))}</span><button class="x" data-action="photo-del" data-id="${p.id}" aria-label="Delete photo">${ic('x')}</button></div>`).join('')}</div>`,
+    () => { photoUrls.forEach(u => URL.revokeObjectURL(u)); photoUrls = []; });
+}
+
+/* ================= Profile & gear ================= */
+const GEAR_TYPES = [['shoes', 'Shoes'], ['glasses', 'Glasses'], ['watch', 'Watch'], ['other', 'Other']];
+function defaultGear() {
+  return [
+    { id: uid(), type: 'shoes', name: 'Adidas Adizero Evo SL', note: 'Running / speed shoe', km: 0, max: 600 },
+    { id: uid(), type: 'watch', name: 'Xiaomi Smart Band 10', note: 'Steps · sleep · heart rate', km: null, max: null },
+    { id: uid(), type: 'glasses', name: 'Glasses', note: '', km: null, max: null },
+  ];
+}
+function openProfile() {
+  const p = S.profile || {}, me = S.me || {}, li = levelInfo(S.xp), rk = rankOf(li.lvl);
+  if (!S.gear) { S.gear = defaultGear(); save(); }
+  const gearRow = g => {
+    const pct = g.max ? clamp((g.km || 0) / g.max, 0, 1) : null;
+    return `<div class="gear">
+      <span class="tmpl-ic">${ic(g.type === 'shoes' ? 'bolt' : g.type === 'watch' ? 'heart' : g.type === 'glasses' ? 'search' : 'plus')}</span>
+      <div class="spacer"><div class="nm">${esc(g.name)}</div><div class="sub">${esc(g.note || GEAR_TYPES.find(t => t[0] === g.type)?.[1] || '')}${g.max ? ` · ${r0(g.km || 0)} / ${g.max} km` : ''}</div>
+        ${pct != null ? bar(g.km || 0, g.max, pct > 0.85 ? 'p' : '') : ''}
+        ${pct != null && pct > 0.85 ? `<div class="small" style="color:var(--orange);margin-top:4px">Foam is near the end — plan a new pair.</div>` : ''}</div>
+      ${g.max ? `<button class="btn sm" data-action="gear-km" data-id="${g.id}">+ km</button>` : ''}
+      <button class="x" data-action="gear-del" data-id="${g.id}" aria-label="Remove ${esc(g.name)}">${ic('x')}</button></div>`;
+  };
+  openSheet(`<div class="prof-head"><div class="rank-badge ${rk.k}">${rk.k}</div><div><div class="status-name">${esc(p.name || 'Hunter')}</div><div class="status-title">${esc(rk.title)} · LV ${li.lvl}</div>
+      ${me.motto ? `<div class="small muted" style="margin-top:2px">“${esc(me.motto)}”</div>` : ''}</div></div>
+    <div class="panel"><div class="panel-title">My style</div>
+      <div class="grid2">
+        <div><label for="me_player">Favourite player</label><input id="me_player" value="${esc(me.player || '')}" placeholder="e.g. Ronaldo"></div>
+        <div><label for="me_club">Club</label><input id="me_club" value="${esc(me.club || '')}" placeholder="e.g. Real Madrid"></div>
+        <div><label for="me_anime">Anime character</label><input id="me_anime" value="${esc(me.anime || '')}" placeholder="e.g. Thorfinn"></div>
+        <div><label for="me_pos">Position</label><input id="me_pos" value="${esc(me.pos || 'Winger')}"></div>
+      </div>
+      <label for="me_love">Loves</label><input id="me_love" value="${esc(me.love || '')}" placeholder="things you love">
+      <label for="me_hate">Hates</label><input id="me_hate" value="${esc(me.hate || '')}" placeholder="things you can’t stand">
+      <label for="me_motto">Motto</label><input id="me_motto" value="${esc(me.motto || '')}" placeholder="one line that pushes you">
+      <button class="btn primary block" style="margin-top:14px" data-action="me-save">Save</button></div>
+    <div class="panel"><div class="panel-title">Gear <small><button class="chip" data-action="gear-new">${ic('plus')} Add</button></small></div>${S.gear.map(gearRow).join('')}
+      <p class="small muted" style="margin-bottom:0">Running shoes like the Evo SL lose their bounce after a few hundred km — log runs to know when.</p></div>
+    <div class="panel"><div class="panel-title">Theme</div>
+      <div class="seg">${[['black', 'Premium black'], ['fantasy', 'Dark fantasy']].map(([k, l]) => `<button class="${(S.settings.theme || 'black') === k ? 'on' : ''}" data-action="theme" data-t="${k}">${l}</button>`).join('')}</div></div>
+    <button class="btn block" data-action="open-photos">${ic('plus')} Progress photos</button>`);
+}
+function openGearNew() {
+  openSheet(`<h2>Add gear</h2>
+    <label for="gr_n">Name</label><input id="gr_n" placeholder="e.g. Nike Mercurial (turf)">
+    <label>Type</label>${seg('gr_t', GEAR_TYPES, 'shoes')}
+    <label for="gr_note">Note</label><input id="gr_note" placeholder="optional">
+    <label for="gr_max">Track mileage up to (km)</label><input id="gr_max" type="number" inputmode="numeric" placeholder="e.g. 600 for running shoes · empty = no tracking">
+    <button class="btn primary block" style="margin-top:16px" data-action="gear-save">Save</button>`);
+}
+
 /* ================= HOME ================= */
 let quoteShift = 0;
 function quoteOfDay() {
   const n = Math.floor(fromKey(dkey()).getTime() / 864e5);
   return LEGENDS[(((n + quoteShift) % LEGENDS.length) + LEGENDS.length) % LEGENDS.length];
 }
+const RARITY = { anime: 'Mythic', football: 'Legendary', basketball: 'Legendary', f1: 'Epic', combat: 'Epic' };
 function quoteCard(q, extra = '') {
-  return `<div class="panel quote legend-card cat-${q.cat} ${extra}"><span class="big" aria-hidden="true">"</span>
-    <div class="qt">${esc(q.q)}</div><div class="qa ar">${esc(q.ar)}</div>
-    <div class="qby">${esc(q.by).toUpperCase()}</div><div class="qfrom">${esc(q.from)}</div></div>`;
+  const no = LEGENDS.indexOf(q) + 1, init = (q.by || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  return `<div class="panel quote legend-card lcard cat-${q.cat} ${extra}">
+    <div class="lc-top"><span class="lc-no">No. ${String(no).padStart(2, '0')} / ${LEGENDS.length}</span><span class="lc-rar">${RARITY[q.cat] || 'Rare'}</span></div>
+    <div class="lc-body"><div class="lc-mono" aria-hidden="true"><span>${esc(init)}</span></div>
+      <div class="spacer"><div class="qby">${esc(q.by)}</div><div class="qfrom">${esc(q.from)}</div></div></div>
+    <div class="qt">“${esc(q.q)}”</div><div class="qa ar">${esc(q.ar)}</div></div>`;
 }
 /* ================= Readiness · steps · cut trend · muscle volume ================= */
 function rhrBase(k) {
@@ -547,6 +785,7 @@ function renderHome() {
   const done = qs.filter(q => q.done).length, sk = streak();
   const late = new Date().getHours() >= 21 && done < 4;
   const ag = agenda(k).slice(0, 4);
+  const nextExam = (S.exams || []).filter(x => x.date >= k).sort((a, b) => a.date.localeCompare(b.date))[0];
   const q = quoteOfDay(), rd = readiness(k), ct = cutTrend(), steps = d.steps || 0;
   const zoneColor = rd ? { go: 'var(--green)', mid: 'var(--gold)', low: 'var(--red)' }[rd.zone] : 'var(--dim)';
   const tk = tplKeyFor(k), tpl = template(tk);
@@ -586,6 +825,8 @@ function renderHome() {
     <div class="ready-tip zone-${{ fast: 'low', good: 'go', slow: 'mid', wait: 'none' }[ct.status]}"><b>${{ fast: 'TOO FAST', good: 'ON TRACK', slow: 'SLOW', wait: 'WEEKLY CHECK-IN' }[ct.status]}</b>${esc(ct.advice)}${ct.tdee ? ` Your real maintenance looks like ~${ct.tdee} kcal.` : ''}</div>
   </div>` : ''}
 
+  ${bossCard()}
+
   <div class="panel">
     <div class="panel-title">Daily quests <small>${done}/${qs.length} · ${sk ? `${sk}-day streak` : 'start a streak'}</small></div>
     <div class="xp-line" style="margin-top:0"><span>EXP to level ${li.lvl + 1}</span><span>${li.into} / ${li.need}</span></div>${bar(li.into, li.need)}
@@ -616,6 +857,7 @@ function renderHome() {
 
   <div class="panel">
     <div class="panel-title">Up next <small><button class="chip" data-go="plan">Full plan</button></small></div>
+    ${nextExam ? `<div class="exam-row" data-action="go-uni" role="button" tabindex="0"><div class="exam-d"><b>${Math.round((fromKey(nextExam.date) - fromKey(k)) / 864e5) || 'NOW'}</b><span>days</span></div><div class="spacer"><div class="nm">${esc(nextExam.subject)}</div><div class="sub">${esc(fmtDate(nextExam.date))}${nextExam.time ? ' · ' + esc(nextExam.time) : ''}</div></div></div>` : ''}
     ${ag.length ? ag.map(agendaRow).join('') : `<div class="empty">Nothing scheduled. Add your lectures and gym times in Plan.</div>`}
   </div>
 
@@ -1091,6 +1333,7 @@ function trainBody() {
     <div><label for="bwaist">Waist cm</label><input id="bwaist" type="number" inputmode="decimal" value="${last?.waist || ''}" placeholder="optional"></div></div>
     <button class="btn primary block" style="margin-top:12px" data-action="weight-save">Save today</button></div>
   ${heat}
+  <button class="btn block" style="margin-bottom:12px" data-action="open-photos">${ic('plus')} Progress photos · before / after</button>
   <div class="panel"><div class="panel-title">Weight trend <small>${last ? `${last.kg} kg` : ''}${ago && last ? ` · ${(last.kg - ago.kg) >= 0 ? '+' : ''}${r1(last.kg - ago.kg)} kg in 30 days` : ''}</small></div>
     ${lineChart(ws.slice(-30).map(w => ({ label: w.date.slice(5), y: w.kg })), { unit: ' kg', target: tw || null })}</div>
   ${ws.some(w => w.waist) ? `<div class="panel"><div class="panel-title">Waist</div>${lineChart(ws.filter(w => w.waist).slice(-30).map(w => ({ label: w.date.slice(5), y: w.waist })), { unit: ' cm', color: '#a78bfa' })}</div>` : ''}
@@ -1193,7 +1436,7 @@ let planTab = 'today';
 const G = { token: null, exp: 0, events: [], mails: [], unread: 0, err: '' };
 function agenda(k) {
   const wd = fromKey(k).getDay(), items = [];
-  for (const e of S.schedule) if (e.days.includes(wd)) items.push({ time: e.start, end: e.end, title: e.title, sub: [EVENT_TYPES[e.type]?.label, e.loc].filter(Boolean).join(' · '), type: e.type, id: e.id });
+  for (const e of S.schedule) if (e.days.includes(wd)) items.push({ time: e.start, end: e.end, title: e.type === 'uni' && e.subject ? `${e.subject}${e.kind ? ' · ' + e.kind : ''}` : e.title, sub: [EVENT_TYPES[e.type]?.label, e.loc].filter(Boolean).join(' · '), type: e.type, id: e.id, att: e.type === 'uni' ? k : null });
   const tk = tplKeyFor(k);
   if (tk !== 'rest' && !items.some(i => i.type === 'gym')) items.push({ time: '', title: `Gym — ${TEMPLATES[tk].name}`, sub: template(tk).sub, type: 'gym', go: 'train' });
   if (aclInfo() && !items.some(i => i.type === 'rehab')) items.push({ time: '', title: `Rehab — ${aclInfo().phase.arc}`, sub: aclInfo().phase.title, type: 'rehab', go: 'rehab' });
@@ -1210,11 +1453,11 @@ function agendaRow(i) {
   const attrs = i.id ? `data-action="ev-edit" data-id="${i.id}" role="button" tabindex="0"` : i.go ? `data-go="${i.go}" role="button" tabindex="0"` : '';
   return `<div class="agenda-item ${isNow ? 'now' : ''}" ${attrs} style="--ev:${EVENT_TYPES[i.type]?.color || '#3df5a7'}">
     <div class="agenda-time">${i.time || '—'}${i.end ? `<br><span class="muted">${i.end}</span>` : ''}</div><span class="agenda-bar"></span>
-    <div class="spacer"><div class="nm">${esc(i.title)}${isNow ? ' <span class="pill-note">NOW</span>' : ''}</div><div class="sub">${esc(i.sub || '')}</div></div></div>`;
+    <div class="spacer"><div class="nm">${esc(i.title)}${isNow ? ' <span class="pill-note">NOW</span>' : ''}</div><div class="sub">${esc(i.sub || '')}</div></div>${i.att && i.att <= dkey() ? attendButtons(i.att, i.id) : ''}</div>`;
 }
 function renderPlan() {
-  const tabs = [['today', 'Today'], ['week', 'Week'], ['tasks', 'Tasks'], ['connect', 'Sync']];
-  const body = { today: planToday, week: planWeek, tasks: planTasks, connect: planConnect }[planTab]();
+  const tabs = [['today', 'Today'], ['uni', 'Uni'], ['week', 'Week'], ['tasks', 'Tasks'], ['connect', 'Sync']];
+  const body = { today: planToday, uni: planUni, week: planWeek, tasks: planTasks, connect: planConnect }[planTab]();
   return `<h1 class="page">PLAN</h1><p class="page-sub">University, gym, rehab — one timeline.</p>
     <div class="seg-tabs">${tabs.map(([k, l]) => `<button class="${planTab === k ? 'on' : ''}" data-action="plan-tab" data-t="${k}">${l}</button>`).join('')}</div>${body}`;
 }
@@ -1285,6 +1528,8 @@ function openEvent(id) {
     <label>Repeats every</label><div class="chips" style="flex-wrap:wrap">${WEEK_ORDER.map(wd => `<button class="chip ${e.days.includes(wd) ? 'on' : ''}" data-action="ev-day" data-wd="${wd}">${DAY_NAMES[wd]}</button>`).join('')}</div>
     <div class="grid2"><div><label for="ev_s">Start</label><input id="ev_s" type="time" value="${e.start}"></div><div><label for="ev_e">End</label><input id="ev_e" type="time" value="${e.end}"></div></div>
     <label for="ev_loc">Location</label><input id="ev_loc" value="${esc(e.loc)}" placeholder="Hall / gym name">
+    <div class="grid2"><div><label for="ev_sub">Subject (uni)</label><input id="ev_sub" value="${esc(e.subject || '')}" placeholder="e.g. Physiology"></div>
+    <div><label>Kind</label>${seg('ev_kind', [['Lecture', 'Lecture'], ['Section', 'Section']], e.kind || 'Lecture')}</div></div>
     <button class="btn primary block" style="margin-top:16px" data-action="ev-save" data-id="${id || ''}">Save</button>
     ${id ? `<button class="btn danger block" style="margin-top:8px" data-action="ev-del" data-id="${id}">Delete</button>` : ''}`);
 }
@@ -1413,6 +1658,30 @@ const A = {
     queueToast('SYSTEM', 'You have become a Player.', `Welcome, ${p.name}`, 'levelup');
   },
   'open-checkin': () => openCheckin(),
+  'open-profile': () => openProfile(),
+  'open-photos': () => openPhotos(),
+  'photo-pose': el => { photoPose = el.dataset.p; openPhotos(); },
+  'photo-del': async el => { if (!confirm('Delete this photo? It cannot be undone.')) return; await PH.del(el.dataset.id); openPhotos(); },
+  theme: el => { S.settings.theme = el.dataset.t; save(); applyTheme(); openProfile(); render(); },
+  'me-save': () => { S.me = { player: val('me_player'), club: val('me_club'), anime: val('me_anime'), pos: val('me_pos'), love: val('me_love'), hate: val('me_hate'), motto: val('me_motto') }; save(); toast('SYSTEM', 'Profile saved.'); openProfile(); },
+  'gear-new': () => openGearNew(),
+  'gear-save': () => { const n = val('gr_n'); if (!n) return; S.gear = [...(S.gear || []), { id: uid(), name: n, type: val('gr_t'), note: val('gr_note'), km: +val('gr_max') ? 0 : null, max: +val('gr_max') || null }]; save(); openProfile(); },
+  'gear-del': el => { if (!confirm('Remove this item?')) return; S.gear = S.gear.filter(g => g.id !== el.dataset.id); save(); openProfile(); },
+  'gear-km': el => { const g = S.gear.find(x => x.id === el.dataset.id); const n = parseFloat(prompt(`Add km to ${g.name}:`, '5')); if (n > 0) { g.km = (g.km || 0) + n; save(); openProfile(); } },
+  'boss-claim': () => { const b = bossOfWeek(); if (!b.slain || b.claimed) return; S.bosses = { ...(S.bosses || {}), [b.week]: b.id }; addXp(300); save(); burst('boss', 'FELLED'); toast('BOSS DEFEATED', b.name, '+300 XP', 'levelup'); render(); },
+  att: el => { const key = attKey(el.dataset.k, el.dataset.id); S.attend = { ...(S.attend || {}) }; S.attend[key] = S.attend[key] === el.dataset.v ? undefined : el.dataset.v; if (!S.attend[key]) delete S.attend[key]; save(); render(); },
+  'att-base': el => {
+    const name = el.dataset.s, sub = uniSubjects().find(x => x.name === name);
+    const n = prompt(`Absences in ${name} BEFORE you started tracking in ARISE (from the uni system):`, String(sub?.base ?? 0));
+    if (n === null) return; const v = parseInt(n, 10); if (!(v >= 0)) return;
+    S.uni = { ...(S.uni || {}), base: { ...(S.uni?.base || {}), [name]: v } }; save(); render();
+  },
+  'att-limit': el => { const n = parseInt(prompt(`Allowed absences for ${el.dataset.s}:`, '3'), 10); if (n >= 0) { S.uni = { ...(S.uni || {}), limits: { ...(S.uni?.limits || {}), [el.dataset.s]: n } }; save(); render(); } },
+  'go-uni': () => { planTab = 'uni'; go('plan'); },
+  'exam-new': () => openExam(),
+  'exam-edit': el => openExam(el.dataset.id),
+  'exam-save': el => { const x = { id: el.dataset.id || uid(), subject: val('ex_s'), date: val('ex_d'), time: val('ex_t'), loc: val('ex_l') }; if (!x.subject || !x.date) { toast('SYSTEM', 'Add a subject and a date.'); return; } S.exams = [...(S.exams || []).filter(e => e.id !== x.id), x]; save(); closeSheet(); render(); },
+  'exam-del': el => { S.exams = (S.exams || []).filter(e => e.id !== el.dataset.id); save(); closeSheet(); render(); },
   'checkin-save': () => {
     const sleep = clamp(+val('ci_sleep') || 0, 0, 14);
     day().ready = { sleep, q: +val('ci_q'), sore: +val('ci_sore'), knee: +val('ci_knee'), energy: +val('ci_energy') };
@@ -1540,7 +1809,7 @@ const A = {
   'ev-day': el => el.classList.toggle('on'),
   'ev-save': el => {
     const days = $$('[data-action="ev-day"].on').map(b => +b.dataset.wd);
-    const e = { id: el.dataset.id || uid(), title: val('ev_title'), type: val('ev_type'), days, start: val('ev_s'), end: val('ev_e'), loc: val('ev_loc') };
+    const e = { id: el.dataset.id || uid(), title: val('ev_title'), type: val('ev_type'), days, start: val('ev_s'), end: val('ev_e'), loc: val('ev_loc'), subject: val('ev_sub') || '', kind: val('ev_kind') || 'Lecture' };
     if (!e.title || !days.length) { toast('SYSTEM', 'Add a title and at least one day.'); return; }
     S.schedule = [...S.schedule.filter(x => x.id !== e.id), e];
     save(); closeSheet(); render();
@@ -1573,6 +1842,11 @@ const A = {
   },
 };
 const CHANGE = {
+  'photo-add': async el => {
+    const f = el.files?.[0]; if (!f) return;
+    try { const blob = await shrink(f); await PH.put({ id: uid(), date: dkey(), pose: photoPose, blob }); toast('SYSTEM', 'Photo saved on this phone.'); openPhotos(); }
+    catch (e) { toast('SYSTEM', 'Could not save the photo: ' + e.message); }
+  },
   split: el => { S.split[+el.dataset.wd] = el.value; save(); },
   phase: el => { S.profile.acl.override = el.value; save(); evaluate(); render(); },
   import: el => {
@@ -1580,6 +1854,15 @@ const CHANGE = {
     if (!f) return;
     f.text().then(txt => {
       const data = JSON.parse(txt);
+      if (data && data.__merge) {
+        const ids = new Set((data.schedule || []).map(e => e.id));
+        S.schedule = [...S.schedule.filter(e => !ids.has(e.id)), ...(data.schedule || [])];
+        if (data.exams) { const ex = new Set(data.exams.map(e => e.id)); S.exams = [...(S.exams || []).filter(e => !ex.has(e.id)), ...data.exams]; }
+        if (data.uni) S.uni = { ...(S.uni || {}), ...data.uni };
+        if (data.profilePatch && S.profile) S.profile = { ...S.profile, ...data.profilePatch, acl: { ...(S.profile.acl || {}), ...(data.profilePatch.acl || {}) } };
+        if (data.me) S.me = { ...(S.me || {}), ...data.me };
+        save(); closeSheet(); planTab = 'uni'; go('plan'); toast('SYSTEM', 'University data added.'); return;
+      }
       if (!data || typeof data !== 'object' || !('days' in data)) throw new Error('Not an ARISE backup');
       S = Object.assign(DEFAULT_STATE(), data); migrate(); save(); closeSheet(); render(); toast('SYSTEM', 'Backup restored.');
     }).catch(e => toast('SYSTEM', 'Import failed: ' + e.message));
@@ -1600,6 +1883,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'fs_g') fsPreview();
+  if (t.classList?.contains('cmp-range')) t.closest('.cmp').style.setProperty('--pos', t.value + '%');
   if (t.id === 'sq') { clearTimeout(searchTimer); searchTimer = setTimeout(() => renderResults(), 120); }
   if (t.dataset.set) {
     const [ei, si, f] = t.dataset.set.split(':');
@@ -1668,6 +1952,7 @@ function burst(kind = 'level', label = '') {
 })();
 
 /* ================= Boot ================= */
+applyTheme();
 if (location.hash.startsWith('#sync')) { const b = parseBand(decodeURIComponent(location.hash.replace(/[?&]/g, ' '))); history.replaceState(null, '', '#home'); route = 'home'; setTimeout(() => applyBand(b), 300); }
 render();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
