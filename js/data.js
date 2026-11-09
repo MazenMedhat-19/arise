@@ -34,6 +34,10 @@ const FOODS = [
   { id: 'r_m27', name: "McDonald's · McFries large", ar: 'بطاطس كبيرة', kcal: 303, p: 3.6, c: 39.7, f: 14.7, srv: [['1 serving', 274]] },
   { id: 'r_m28', name: "McDonald's · Chicken Caesar Salad (no dressing)", ar: 'سلطة سيزر بالفراخ', kcal: 61, p: 8.6, c: 4.5, f: 2.2, srv: [['1 serving', 212.2]] },
   // Restaurants — Anas El Demeshki (estimates: no published nutrition data)
+  { id: 'r_a5', name: 'Anas El Demeshki ≈ · Half mesahab chicken (charcoal) — chicken only', ar: 'نص فرخة مسحب على الفحم (الفراخ بس)', kcal: 200, p: 23.8, c: 0.8, f: 11.2, srv: [['half chicken', 260]] },
+  { id: 'r_a6', name: 'Anas El Demeshki ≈ · Half mesahab chicken meal (bread + fries + toum)', ar: 'وجبة نص فرخة مسحب', kcal: 211, p: 12.9, c: 17.0, f: 10.0, srv: [['1 meal', 560]] },
+  { id: 'r_a7', name: 'Anas El Demeshki ≈ · Sheesh tawook meal with rice', ar: 'وجبة شيش طاووق برز', kcal: 169, p: 11.9, c: 16.9, f: 5.8, srv: [['1 meal', 520]] },
+  { id: 'r_a8', name: 'Anas El Demeshki ≈ · Sheesh tawook meal with rice (no toum, no bread)', ar: 'وجبة شيش طاووق برز من غير ثومية', kcal: 153, p: 13.3, c: 17.8, f: 3.1, srv: [['1 meal', 450]] },
   { id: 'r_a0', name: 'Anas El Demeshki ≈ · Chicken shawarma sandwich (Syrian)', ar: 'ساندوتش شاورما فراخ سوري', kcal: 217, p: 12.2, c: 19.6, f: 9.6, srv: [['1 portion', 230]] },
   { id: 'r_a1', name: 'Anas El Demeshki ≈ · Beef shawarma sandwich (Syrian)', ar: 'ساندوتش شاورما لحمة سوري', kcal: 243, p: 13.0, c: 19.1, f: 12.2, srv: [['1 portion', 230]] },
   { id: 'r_a2', name: 'Anas El Demeshki ≈ · Chicken shawarma — meat only', ar: 'لحم شاورما فراخ بس', kcal: 200, p: 24.0, c: 2.7, f: 10.0, srv: [['1 portion', 150]] },

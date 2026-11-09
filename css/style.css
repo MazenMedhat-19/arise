@@ -554,3 +554,9 @@ label small { text-transform: none; letter-spacing: 0; font-weight: 500; }
   .tab-ind { transition: none; }
   .view.enter .arc, .view.enter .bar > i { animation: none; }
 }
+
+/* Meal-plan swaps */
+.plan-food { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; border-radius: 12px; transition: background-color .2s ease, transform .2s var(--ease-out); }
+.plan-food.pressing { background: var(--panel-2); transform: scale(.98); }
+.plan-food .x { font-size: 18px; color: var(--accent); }
+.result.on { background: var(--accent-soft); border-radius: 12px; }

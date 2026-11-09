@@ -932,15 +932,26 @@ function openQuick() {
 }
 
 /* ----- Meal plan generator ----- */
+const PLAN_BASE = () => [
+  { meal: 'Breakfast', time: '08:00', items: [['f_egg', 150, 'p'], ['f_eggw', 66, 'p'], ['f_ful', 150, 'c'], ['f_baladi', 45, 'c'], ['f_salad', 100, '-']] },
+  { meal: 'Lunch', time: '14:00', items: [['f_chk', 180, 'p'], ['f_rice', 200, 'c'], ['f_oil', 10, '-'], ['f_salad', 200, '-']] },
+  { meal: 'Pre-gym', time: '17:00', items: [['f_greek', 170, 'p'], ['f_oats', 40, 'c'], ['f_banana', 118, 'c'], ['f_honey', 10, '-']] },
+  { meal: 'Dinner', time: '21:00', items: [['f_tuna', 120, 'p'], ['f_areesh', 100, 'p'], ['f_baladi', 45, 'c'], ['f_potato', 170, 'c'], ['f_salad', 150, '-']] },
+];
+const SWAPS = {
+  p: ['f_chk', 'f_chkth', 'f_tawook', 'f_fish', 'f_shrimp', 'f_beef', 'f_kofta', 'f_tuna', 'f_egg', 'f_eggw', 'f_greek', 'f_areesh', 'f_whey', 'f_milkl'],
+  c: ['f_baladi', 'f_shami', 'f_tortbran', 'f_toastb', 'f_toast', 'f_rice', 'f_pasta', 'f_potato', 'f_sweetp', 'f_oats', 'f_ful', 'f_lentil', 'f_banana', 'f_apple', 'f_orange', 'f_dates', 'f_guava', 'f_mango'],
+  '-': ['f_salad', 'f_oil', 'f_tahini', 'f_hummus', 'f_honey', 'f_almond', 'f_pb'],
+};
 function dietPlan() {
   const t = targets();
   const F = id => FOODS.find(f => f.id === id);
-  const plan = [
-    { meal: 'Breakfast', time: '08:00', items: [['f_egg', 150, 'p'], ['f_eggw', 66, 'p'], ['f_ful', 150, 'c'], ['f_baladi', 45, 'c'], ['f_salad', 100, '-']] },
-    { meal: 'Lunch', time: '14:00', items: [['f_chk', 180, 'p'], ['f_rice', 200, 'c'], ['f_oil', 10, '-'], ['f_salad', 200, '-']] },
-    { meal: 'Pre-gym', time: '17:00', items: [['f_greek', 170, 'p'], ['f_oats', 40, 'c'], ['f_banana', 118, 'c'], ['f_honey', 10, '-']] },
-    { meal: 'Dinner', time: '21:00', items: [['f_tuna', 120, 'p'], ['f_areesh', 100, 'p'], ['f_baladi', 45, 'c'], ['f_potato', 170, 'c'], ['f_salad', 150, '-']] },
-  ];
+  const plan = PLAN_BASE();
+  const sw = S.planSwaps || {};
+  plan.forEach((m, mi) => m.items.forEach((it, ii) => {
+    const to = sw[`${mi}:${ii}`], from = F(it[0]), nf = to && F(to);
+    if (nf && from) { const m0 = calc(from, it[1]); const key = it[2] === 'p' ? 'p' : 'kcal'; it[0] = to; it[1] = clamp((m0[key] / (nf[key] || 1)) * 100, 5, 600); }
+  }));
   const sum = () => plan.flatMap(m => m.items).reduce((a, [id, g]) => { const m = calc(F(id), g); return { kcal: a.kcal + m.kcal, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }; }, { kcal: 0, p: 0, c: 0, f: 0 });
   // 1) scale protein foods to the protein target, 2) scale carb foods to fill the calories
   const pOnly = plan.flatMap(m => m.items).filter(i => i[2] === 'p').reduce((a, [id, g]) => a + calc(F(id), g).p, 0);
@@ -950,11 +961,12 @@ function dietPlan() {
   const cf = clamp((t.kcal - (sum().kcal - cK)) / cK, 0.3, 2.6);
   plan.forEach(m => m.items.forEach(i => { if (i[2] === 'c') i[1] *= cf; i[1] = Math.max(5, Math.round(i[1] / 5) * 5); }));
   const tot = sum();
-  openSheet(`<h2>MEAL PLAN</h2><p class="small muted">Built from your targets with Egyptian staples. Swap freely: chicken ↔ fish/kofta, rice ↔ pasta/potato, tuna ↔ eggs.</p>
+  openSheet(`<h2>MEAL PLAN</h2><p class="small muted">Built from your targets. <b>Long-press</b> any food (or tap ⇄) to swap it — ARISE re-balances the amounts to keep your macros.</p>
+    ${Object.keys(S.planSwaps || {}).length ? `<button class="btn sm" style="margin-bottom:10px" data-action="plan-reset">Reset swaps</button>` : ''}
     ${plan.map((m, mi) => {
       const mt = m.items.reduce((a, [id, g]) => a + calc(F(id), g).kcal, 0);
       return `<div class="panel"><div class="meal-head"><h3>${m.meal.toUpperCase()} <span class="muted small">· ${m.time}</span></h3><span class="k">${r0(mt)} kcal</span></div>
-      ${m.items.map(([id, g]) => { const f = F(id), c = calc(f, g); return `<div class="food"><div class="spacer"><div class="nm">${esc(f.name)} <span class="ar muted small">${esc(f.ar)}</span></div><div class="mt">${g} g · P ${r1(c.p)} · C ${r1(c.c)} · F ${r1(c.f)}</div></div><span class="kc">${r0(c.kcal)}</span></div>`; }).join('')}
+      ${m.items.map(([id, g, role], ii) => { const f = F(id), c = calc(f, g); return `<div class="food plan-food" data-mi="${mi}" data-ii="${ii}" data-role="${role}"><div class="spacer"><div class="nm">${esc(f.name)} <span class="ar muted small">${esc(f.ar)}</span></div><div class="mt">${g} g · P ${r1(c.p)} · C ${r1(c.c)} · F ${r1(c.f)}</div></div><span class="kc">${r0(c.kcal)}</span><button class="x" data-action="plan-swap" data-mi="${mi}" data-ii="${ii}" data-role="${role}" aria-label="Swap ${esc(f.name)}">⇄</button></div>`; }).join('')}
       <button class="btn sm cyan" style="margin-top:8px" data-action="log-plan-meal" data-i="${mi}">Log this meal</button></div>`;
     }).join('')}
     <div class="panel sys"><div class="grid2">
@@ -965,6 +977,31 @@ function dietPlan() {
     <div class="disclaimer"><b>Rules of the System:</b> protein in every meal · 3-4 L water · eat carbs around training · fruit/veg daily · one flexible meal per week is allowed — log it anyway.</div>`);
   window.__plan = plan;
 }
+
+function openSwap(mi, ii, role) {
+  const cur = window.__plan?.[mi]?.items?.[ii]?.[0];
+  const list = (SWAPS[role] || SWAPS['-']).map(id => FOODS.find(f => f.id === id)).filter(Boolean);
+  openSheet(`<h2>Swap food</h2><p class="small muted" style="margin-top:0">${role === 'p' ? 'Protein swaps keep the same grams of protein.' : 'Swaps keep the same calories.'}</p>
+    ${list.map(f => `<div class="result ${f.id === cur ? 'on' : ''}" data-action="plan-pick" data-k="${mi}:${ii}" data-id="${f.id}" role="button" tabindex="0">
+      <div class="spacer"><div class="nm">${esc(f.name)}</div><div class="ar">${esc(f.ar || '')}</div><div class="sub">${r0(f.kcal)} kcal · P ${r1(f.p)} · C ${r1(f.c)} · F ${r1(f.f)} per 100 g</div></div>
+      ${f.id === cur ? '<span class="src">NOW</span>' : ''}</div>`).join('')}
+    <button class="btn block" style="margin-top:12px" data-action="diet-plan">Back to plan</button>`);
+}
+/* Long-press a plan food to swap it */
+(() => {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  document.addEventListener('touchstart', e => {
+    const row = e.target.closest('.plan-food');
+    if (!row || e.target.closest('button')) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    row.classList.add('pressing');
+    timer = setTimeout(() => { row.classList.remove('pressing'); timer = null; openSwap(+row.dataset.mi, +row.dataset.ii, row.dataset.role); }, 480);
+  }, { passive: true });
+  document.addEventListener('touchmove', e => { if (timer && (Math.abs(e.touches[0].clientX - sx) > 8 || Math.abs(e.touches[0].clientY - sy) > 8)) { cancel(); $$('.plan-food.pressing').forEach(r => r.classList.remove('pressing')); } }, { passive: true });
+  document.addEventListener('touchend', () => { cancel(); $$('.plan-food.pressing').forEach(r => r.classList.remove('pressing')); });
+  document.addEventListener('contextmenu', e => { const row = e.target.closest('.plan-food'); if (row) { e.preventDefault(); openSwap(+row.dataset.mi, +row.dataset.ii, row.dataset.role); } });
+})();
 
 /* ================= TRAIN ================= */
 let trainTab = 'today', trainWd = null;
@@ -1429,6 +1466,9 @@ const A = {
     evaluate(fuelDate); closeSheet(); render();
   },
   'diet-plan': () => dietPlan(),
+  'plan-swap': el => openSwap(+el.dataset.mi, +el.dataset.ii, el.dataset.role),
+  'plan-pick': el => { S.planSwaps = { ...(S.planSwaps || {}), [el.dataset.k]: el.dataset.id }; save(); dietPlan(); toast('SWAPPED', 'Amounts re-balanced to your targets.'); },
+  'plan-reset': () => { S.planSwaps = {}; save(); dietPlan(); },
   'log-plan-meal': el => {
     const m = window.__plan?.[+el.dataset.i];
     if (!m) return;
