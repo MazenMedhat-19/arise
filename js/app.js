@@ -1639,7 +1639,8 @@ function openSettings() {
       <div class="grid2"><button class="btn cyan" data-action="backup-export">${ic('download')} Export</button>
       <label class="btn" style="margin:0;color:var(--text);font-size:14px">Import<input type="file" accept="application/json,.json" data-change="import" hidden></label></div>
       <button class="btn danger block" style="margin-top:10px" data-action="reset-all">Reset everything</button></div>
-    <p class="small muted" style="text-align:center">ARISE · v1.0 · your data never leaves this device unless you export it.</p>`);
+    <button class="btn block" data-action="force-update">Check for update</button>
+    <p class="small muted" style="text-align:center">ARISE · v1.6.1 · your data never leaves this device unless you export it.</p>`);
 }
 
 /* ================= Actions ================= */
@@ -1659,6 +1660,11 @@ const A = {
   },
   'open-checkin': () => openCheckin(),
   'open-profile': () => openProfile(),
+  'force-update': async () => {
+    toast('SYSTEM', 'Updating…');
+    try { for (const r of (await navigator.serviceWorker?.getRegistrations?.()) || []) await r.unregister(); for (const k of await caches.keys()) await caches.delete(k); } catch (e) { /* ignore */ }
+    location.reload();
+  },
   'open-photos': () => openPhotos(),
   'photo-pose': el => { photoPose = el.dataset.p; openPhotos(); },
   'photo-del': async el => { if (!confirm('Delete this photo? It cannot be undone.')) return; await PH.del(el.dataset.id); openPhotos(); },
@@ -1854,7 +1860,7 @@ const CHANGE = {
     if (!f) return;
     f.text().then(txt => {
       const data = JSON.parse(txt);
-      if (data && data.__merge) {
+      if (data && (data.__merge || (!('days' in data) && (data.schedule || data.exams || data.uni)))) {
         const ids = new Set((data.schedule || []).map(e => e.id));
         S.schedule = [...S.schedule.filter(e => !ids.has(e.id)), ...(data.schedule || [])];
         if (data.exams) { const ex = new Set(data.exams.map(e => e.id)); S.exams = [...(S.exams || []).filter(e => !ex.has(e.id)), ...data.exams]; }
