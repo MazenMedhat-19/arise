@@ -659,3 +659,13 @@ button.due { border: 0; cursor: pointer; min-height: 30px; }
 :root[data-theme="fantasy"] .chip.on, :root[data-theme="fantasy"] .seg button.on, :root[data-theme="fantasy"] .seg-tabs button.on { background: var(--accent); color: var(--accent-ink); }
 :root[data-theme="fantasy"] .quest.done .qbox { box-shadow: 0 0 12px rgba(216, 180, 106, .5); }
 :root[data-theme="fantasy"] .hello-name { font-weight: 700; }
+
+/* Daily lecture brief */
+.brief-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.brief-row:last-child { border-bottom: 0; }
+.brief-row .nm { font-weight: 700; }
+.brief-row .sub { font-size: 12.5px; color: var(--muted); }
+.brief-tag { font-size: 10px; font-weight: 800; letter-spacing: .08em; padding: 4px 8px; border-radius: 999px; white-space: nowrap; background: var(--panel-2); color: var(--muted); }
+.lv-must .brief-tag { background: rgba(255, 69, 58, .16); color: var(--red); }
+.lv-high .brief-tag { background: rgba(255, 159, 10, .16); color: var(--orange); }
+.lv-must .agenda-time { color: var(--red); }

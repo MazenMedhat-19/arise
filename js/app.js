@@ -544,7 +544,12 @@ function planUni() {
   const exams = (S.exams || []).filter(x => x.date >= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const past = (S.exams || []).filter(x => x.date < k).slice(-4);
   const daysTo = d => Math.round((fromKey(d) - fromKey(k)) / 864e5);
-  return `<div class="panel sys"><div class="panel-title">Midterms & exams <small><button class="chip" data-action="exam-new">${ic('plus')} Add</button></small></div>
+  return `${briefCard(k)}
+  <div class="panel"><div class="panel-title">Morning brief on your iPhone</div>
+    <p class="small muted">Adds a 7:00 notification for every uni day from Sat 14 Nov until the end of term, listing what you must attend, plus a 20-minute warning before each session in a subject that’s close to the 25% limit.</p>
+    <button class="btn primary block" data-action="brief-ics">${ic('cal')} Add daily brief to Calendar</button>
+    <p class="small muted" style="margin-bottom:0">Re-add it after a few weeks so the must-attend list matches your latest absences.</p></div>
+  <div class="panel sys"><div class="panel-title">Midterms & exams <small><button class="chip" data-action="exam-new">${ic('plus')} Add</button></small></div>
     ${exams.length ? exams.map(x => `<div class="exam-row" data-action="exam-edit" data-id="${x.id}" role="button" tabindex="0">
       <div class="exam-d"><b>${daysTo(x.date) === 0 ? 'TODAY' : daysTo(x.date)}</b><span>${daysTo(x.date) === 0 ? '' : daysTo(x.date) === 1 ? 'day' : 'days'}</span></div>
       <div class="spacer"><div class="nm">${esc(x.subject)}</div><div class="sub">${esc(fmtDate(x.date))}${x.time ? ` · ${esc(x.time)}` : ''}${x.loc ? ` · ${esc(x.loc)}` : ''}</div></div>${ic('right')}</div>`).join('')
@@ -571,6 +576,57 @@ function planUni() {
           <div class="spacer"><div class="nm">${esc(e.subject || e.title)}</div><div class="sub">${esc(e.kind || 'Lecture')}${e.loc ? ' · ' + esc(e.loc) : ''}</div></div>${dk <= k ? attendButtons(dk, e.id) : ''}</div>`).join('')}</div>`;
     }).join('') || `<div class="empty">No university sessions this week.</div>`}
   </div>`;
+}
+/* Daily lecture brief: what you must attend today */
+function briefFor(k = dkey()) {
+  const wd = fromKey(k).getDay(), subs = uniSubjects();
+  const evs = S.schedule.filter(e => e.type === 'uni' && e.days.includes(wd)).sort((a, b) => toMin(a.start) - toMin(b.start));
+  return evs.map(e => {
+    const sub = subs.find(x => x.events.some(y => y.id === e.id));
+    const st = sub ? attStats(sub) : null;
+    const left = sub ? sub.limit - (sub.base + st.Lecture.a + st.Section.a) : 99;
+    const level = left <= 4 ? 'must' : left <= 6 ? 'high' : 'ok';
+    return { e, sub, left, level, mark: S.attend?.[attKey(k, e.id)] };
+  });
+}
+function briefCard(k = dkey()) {
+  const b = briefFor(k);
+  if (!b.length) return '';
+  const exam = (S.exams || []).some(x => x.date === k);
+  const must = b.filter(x => x.level === 'must').length;
+  const lab = { must: 'MUST ATTEND', high: 'DON’T SKIP', ok: 'ATTEND' };
+  return `<div class="panel brief"><div class="panel-title">Today’s lectures <small>${must ? `${must} must-attend` : `${b.length} sessions`}</small></div>
+    ${exam ? `<div class="small muted" style="margin-bottom:6px">Exam day — check the exam card above.</div>` : ''}
+    ${b.map(x => `<div class="brief-row lv-${x.level}">
+      <div class="agenda-time">${x.e.start}</div>
+      <div class="spacer"><div class="nm">${esc((x.sub?.name || x.e.title).split(' · ')[0])} <span class="muted small">${esc(x.e.kind || '')}</span></div>
+        <div class="sub">${esc(x.e.loc || '')}${x.sub ? ` · ${Math.max(0, x.left)} absence${x.left === 1 ? '' : 's'} left` : ''}</div></div>
+      <span class="brief-tag">${lab[x.level]}</span>${attendButtons(k, x.e.id)}</div>`).join('')}</div>`;
+}
+function exportBriefICS() {
+  const BY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const start = S.uni?.briefFrom || '2026-11-14', until = (S.uni?.termEnd || '2027-01-14').replace(/-/g, '') + 'T235959Z';
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const dt = (k, t) => k.replace(/-/g, '') + 'T' + t.replace(':', '') + '00';
+  const firstOn = wd => { let k = start; while (fromKey(k).getDay() !== wd) k = addDays(k, 1); return k; };
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ARISE//Brief//EN', 'CALSCALE:GREGORIAN'];
+  for (const wd of [6, 0, 1, 2, 3, 4, 5]) {
+    const k = firstOn(wd), b = briefFor(k);
+    if (!b.length) continue;
+    const must = b.filter(x => x.level === 'must');
+    const head = must.length ? `MUST: ${must.map(x => (x.sub?.name || x.e.title).split(' · ')[0]).join(', ')}` : `${b.length} sessions today`;
+    const desc = b.map(x => `${x.e.start} ${(x.sub?.name || x.e.title).split(' · ')[0]} ${x.e.kind || ''} — ${x.e.loc || ''}${x.level === 'must' ? ' (MUST ATTEND)' : x.level === 'high' ? " (don't skip)" : ''}`).join('\n');
+    L.push('BEGIN:VEVENT', `UID:brief-${wd}@arise`, `DTSTAMP:${stamp}`, `DTSTART:${dt(k, '07:00')}`, `DTEND:${dt(k, '07:10')}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${BY[wd]};UNTIL=${until}`, `SUMMARY:${icsEsc('ARISE brief · ' + head)}`, `DESCRIPTION:${icsEsc(desc + '\n\nOpen ARISE to mark attendance.')}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(head)}`, 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT');
+    for (const x of b.filter(y => y.level !== 'ok')) {
+      L.push('BEGIN:VEVENT', `UID:must-${x.e.id}-${wd}@arise`, `DTSTAMP:${stamp}`, `DTSTART:${dt(k, x.e.start)}`, `DTEND:${dt(k, x.e.end || x.e.start)}`,
+        `RRULE:FREQ=WEEKLY;BYDAY=${BY[wd]};UNTIL=${until}`, `SUMMARY:${icsEsc(`${x.level === 'must' ? '🔴 MUST' : '🟠'} ${(x.sub?.name || x.e.title).split(' · ')[0]} ${x.e.kind || ''}`)}`,
+        `LOCATION:${icsEsc(x.e.loc || '')}`, 'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Leave now', 'TRIGGER:-PT20M', 'END:VALARM', 'END:VEVENT');
+    }
+  }
+  L.push('END:VCALENDAR');
+  shareOrDownload('arise-daily-brief.ics', L.join('\r\n'), 'text/calendar');
 }
 function openExam(id) {
   const x = (S.exams || []).find(e => e.id === id) || { subject: '', date: dkey(), time: '', loc: '' };
@@ -813,6 +869,8 @@ function renderHome() {
       ${d.workout?.done ? `<span class="pill-note">CLEARED</span>` : ic('right')}
     </div>
   </div>
+
+  ${briefCard(k)}
 
   ${ct.deadline || ['acut', 'cut'].includes(S.profile.goal) ? `
   <div class="panel cut-card" data-action="go-body" role="button" tabindex="0">
@@ -1640,7 +1698,7 @@ function openSettings() {
       <label class="btn" style="margin:0;color:var(--text);font-size:14px">Import<input type="file" accept="application/json,.json" data-change="import" hidden></label></div>
       <button class="btn danger block" style="margin-top:10px" data-action="reset-all">Reset everything</button></div>
     <button class="btn block" data-action="force-update">Check for update</button>
-    <p class="small muted" style="text-align:center">ARISE · v1.6.1 · your data never leaves this device unless you export it.</p>`);
+    <p class="small muted" style="text-align:center">ARISE · v1.7.0 · your data never leaves this device unless you export it.</p>`);
 }
 
 /* ================= Actions ================= */
@@ -1683,6 +1741,7 @@ const A = {
     S.uni = { ...(S.uni || {}), base: { ...(S.uni?.base || {}), [name]: v } }; save(); render();
   },
   'att-limit': el => { const n = parseInt(prompt(`Allowed absences for ${el.dataset.s}:`, '3'), 10); if (n >= 0) { S.uni = { ...(S.uni || {}), limits: { ...(S.uni?.limits || {}), [el.dataset.s]: n } }; save(); render(); } },
+  'brief-ics': () => exportBriefICS(),
   'go-uni': () => { planTab = 'uni'; go('plan'); },
   'exam-new': () => openExam(),
   'exam-edit': el => openExam(el.dataset.id),
