@@ -244,6 +244,7 @@ function evaluate(k = dkey()) {
   }
   if (delta) addXp(delta);
   save();
+  checkAch();
 }
 function addXp(n) {
   const before = levelInfo(S.xp).lvl;
@@ -722,6 +723,7 @@ function openProfile() {
       <label for="me_hate">Hates</label><input id="me_hate" value="${esc(me.hate || '')}" placeholder="things you can’t stand">
       <label for="me_motto">Motto</label><input id="me_motto" value="${esc(me.motto || '')}" placeholder="one line that pushes you">
       <button class="btn primary block" style="margin-top:14px" data-action="me-save">Save</button></div>
+    ${trophiesPanel()}
     <div class="panel"><div class="panel-title">Gear <small><button class="chip" data-action="gear-new">${ic('plus')} Add</button></small></div>${S.gear.map(gearRow).join('')}
       <p class="small muted" style="margin-bottom:0">Running shoes like the Evo SL lose their bounce after a few hundred km — log runs to know when.</p></div>
     <div class="panel"><div class="panel-title">Theme</div>
@@ -735,6 +737,45 @@ function openGearNew() {
     <label for="gr_note">Note</label><input id="gr_note" placeholder="optional">
     <label for="gr_max">Track mileage up to (km)</label><input id="gr_max" type="number" inputmode="numeric" placeholder="e.g. 600 for running shoes · empty = no tracking">
     <button class="btn primary block" style="margin-top:16px" data-action="gear-save">Save</button>`);
+}
+
+
+/* ================= Achievements ================= */
+const ACH = [
+  { id: 'gate1', name: 'First Gate', desc: 'Clear your first workout', ic: 'push', test: () => S.history.length >= 1 },
+  { id: 'gate10', name: 'Dungeon Regular', desc: 'Clear 10 workouts', ic: 'push', test: () => S.history.length >= 10 },
+  { id: 'gate40', name: 'Shadow Army', desc: 'Clear 40 workouts', ic: 'push', test: () => S.history.length >= 40 },
+  { id: 'knee8', name: 'Iron Knee', desc: 'Clear 8 leg days', ic: 'lower', test: () => S.history.filter(h => ['lower', 'lower2'].includes(h.tpl)).length >= 8 },
+  { id: 'boss1', name: 'Enemy Felled', desc: 'Defeat your first weekly boss', ic: 'flame', test: () => Object.keys(S.bosses || {}).length >= 1 },
+  { id: 'boss4', name: 'Boss Hunter', desc: 'Defeat 4 weekly bosses', ic: 'flame', test: () => Object.keys(S.bosses || {}).length >= 4 },
+  { id: 'prot7', name: 'Protein Monarch', desc: 'Hit protein 7 days in a row', ic: 'bolt', test: () => runOf(k => S.days[k] && totals(k).p >= targets(k).p * 0.9) >= 7 },
+  { id: 'streak7', name: 'Will of Fire', desc: '7-day quest streak', ic: 'flame', test: () => streak() >= 7 },
+  { id: 'streak30', name: 'Hokage Discipline', desc: '30-day quest streak', ic: 'flame', test: () => streak() >= 30 },
+  { id: 'steps10', name: 'Winger’s Lungs', desc: 'Walk 10,000 steps in a day', ic: 'bolt', test: () => Object.values(S.days).some(d => (d.steps || 0) >= 10000) },
+  { id: 'steps7', name: 'Step Serpent Slayer', desc: '10k steps 7 days in a row', ic: 'bolt', test: () => runOf(k => (S.days[k]?.steps || 0) >= 10000) >= 7 },
+  { id: 'check14', name: 'Know Thyself', desc: '14 morning check-ins', ic: 'moon', test: () => Object.values(S.days).filter(d => d.ready).length >= 14 },
+  { id: 'attend', name: 'Front Row', desc: 'Attend 15 uni sessions', ic: 'book', test: () => Object.values(S.attend || {}).filter(v => v === 'present').length >= 15 },
+  { id: 'cut2', name: 'First Blood', desc: '7-day average 2 kg below your start', ic: 'flame', test: () => { const c = cutTrend(); return c.cur && c.first && c.first.kg - c.cur.v >= 2; } },
+  { id: 'cut5', name: 'Reforged', desc: '7-day average 5 kg below your start', ic: 'flame', test: () => { const c = cutTrend(); return c.cur && c.first && c.first.kg - c.cur.v >= 5; } },
+  { id: 'lvl10', name: 'C-Rank Hunter', desc: 'Reach level 10', ic: 'check', test: () => levelInfo(S.xp).lvl >= 10 },
+  { id: 'photo', name: 'Mirror Mirror', desc: 'Save your first progress photo', ic: 'plus', test: () => !!S.flags?.photo },
+  { id: 'pr5', name: 'Record Breaker', desc: 'Set 5 personal records', ic: 'push', test: () => Object.keys(S.prs || {}).length >= 5 },
+];
+function runOf(fn) { let n = 0, k = dkey(); if (!fn(k)) k = addDays(k, -1); while (fn(k) && n < 400) { n++; k = addDays(k, -1); } return n; }
+function checkAch() {
+  S.ach = S.ach || {};
+  const fresh = [];
+  for (const a of ACH) { try { if (!S.ach[a.id] && a.test()) { S.ach[a.id] = dkey(); fresh.push(a); } } catch (e) { /* ignore */ } }
+  if (fresh.length) {
+    try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ }
+    fresh.forEach((a, i) => setTimeout(() => { queueToast('TROPHY UNLOCKED', a.name, a.desc, 'levelup'); burst('level', '🏆'); }, 400 + i * 1800));
+  }
+}
+function trophiesPanel() {
+  const got = S.ach || {}, n = ACH.filter(a => got[a.id]).length;
+  return `<div class="panel"><div class="panel-title">Trophies <small>${n} / ${ACH.length}</small></div>
+    <div class="troph">${ACH.map(a => `<div class="tr ${got[a.id] ? 'on' : ''}" title="${esc(a.desc)}">
+      <span class="tr-ic">${ic(a.ic)}</span><div class="tr-n">${esc(a.name)}</div><div class="tr-d">${got[a.id] ? esc(fmtDate(got[a.id])) : esc(a.desc)}</div></div>`).join('')}</div></div>`;
 }
 
 /* ================= HOME ================= */
@@ -1698,7 +1739,7 @@ function openSettings() {
       <label class="btn" style="margin:0;color:var(--text);font-size:14px">Import<input type="file" accept="application/json,.json" data-change="import" hidden></label></div>
       <button class="btn danger block" style="margin-top:10px" data-action="reset-all">Reset everything</button></div>
     <button class="btn block" data-action="force-update">Check for update</button>
-    <p class="small muted" style="text-align:center">ARISE · v1.7.0 · your data never leaves this device unless you export it.</p>`);
+    <p class="small muted" style="text-align:center">ARISE · v1.8.0 · your data never leaves this device unless you export it.</p>`);
 }
 
 /* ================= Actions ================= */
@@ -1732,7 +1773,7 @@ const A = {
   'gear-save': () => { const n = val('gr_n'); if (!n) return; S.gear = [...(S.gear || []), { id: uid(), name: n, type: val('gr_t'), note: val('gr_note'), km: +val('gr_max') ? 0 : null, max: +val('gr_max') || null }]; save(); openProfile(); },
   'gear-del': el => { if (!confirm('Remove this item?')) return; S.gear = S.gear.filter(g => g.id !== el.dataset.id); save(); openProfile(); },
   'gear-km': el => { const g = S.gear.find(x => x.id === el.dataset.id); const n = parseFloat(prompt(`Add km to ${g.name}:`, '5')); if (n > 0) { g.km = (g.km || 0) + n; save(); openProfile(); } },
-  'boss-claim': () => { const b = bossOfWeek(); if (!b.slain || b.claimed) return; S.bosses = { ...(S.bosses || {}), [b.week]: b.id }; addXp(300); save(); burst('boss', 'FELLED'); toast('BOSS DEFEATED', b.name, '+300 XP', 'levelup'); render(); },
+  'boss-claim': () => { const b = bossOfWeek(); if (!b.slain || b.claimed) return; S.bosses = { ...(S.bosses || {}), [b.week]: b.id }; addXp(300); save(); burst('boss', 'FELLED'); toast('BOSS DEFEATED', b.name, '+300 XP', 'levelup'); checkAch(); render(); },
   att: el => { const key = attKey(el.dataset.k, el.dataset.id); S.attend = { ...(S.attend || {}) }; S.attend[key] = S.attend[key] === el.dataset.v ? undefined : el.dataset.v; if (!S.attend[key]) delete S.attend[key]; save(); render(); },
   'att-base': el => {
     const name = el.dataset.s, sub = uniSubjects().find(x => x.name === name);
@@ -1909,7 +1950,7 @@ const A = {
 const CHANGE = {
   'photo-add': async el => {
     const f = el.files?.[0]; if (!f) return;
-    try { const blob = await shrink(f); await PH.put({ id: uid(), date: dkey(), pose: photoPose, blob }); toast('SYSTEM', 'Photo saved on this phone.'); openPhotos(); }
+    try { const blob = await shrink(f); await PH.put({ id: uid(), date: dkey(), pose: photoPose, blob }); S.flags = { ...(S.flags || {}), photo: true }; save(); checkAch(); toast('SYSTEM', 'Photo saved on this phone.'); openPhotos(); }
     catch (e) { toast('SYSTEM', 'Could not save the photo: ' + e.message); }
   },
   split: el => { S.split[+el.dataset.wd] = el.value; save(); },
@@ -1919,14 +1960,15 @@ const CHANGE = {
     if (!f) return;
     f.text().then(txt => {
       const data = JSON.parse(txt);
-      if (data && (data.__merge || (!('days' in data) && (data.schedule || data.exams || data.uni)))) {
+      if (data && (data.__merge || (!('days' in data) && (data.schedule || data.exams || data.uni || data.me || data.gear)))) {
         const ids = new Set((data.schedule || []).map(e => e.id));
         S.schedule = [...S.schedule.filter(e => !ids.has(e.id)), ...(data.schedule || [])];
         if (data.exams) { const ex = new Set(data.exams.map(e => e.id)); S.exams = [...(S.exams || []).filter(e => !ex.has(e.id)), ...data.exams]; }
         if (data.uni) S.uni = { ...(S.uni || {}), ...data.uni };
         if (data.profilePatch && S.profile) S.profile = { ...S.profile, ...data.profilePatch, acl: { ...(S.profile.acl || {}), ...(data.profilePatch.acl || {}) } };
         if (data.me) S.me = { ...(S.me || {}), ...data.me };
-        save(); closeSheet(); planTab = 'uni'; go('plan'); toast('SYSTEM', 'University data added.'); return;
+        if (data.gear) { const ids = new Set(data.gear.map(g => g.id)); S.gear = [...(S.gear || defaultGear()).filter(g => !ids.has(g.id) && g.name !== 'Glasses' && !data.gear.some(n => n.name === g.name)), ...data.gear]; }
+        save(); closeSheet(); if (data.schedule || data.exams) { planTab = 'uni'; go('plan'); } else render(); toast('SYSTEM', 'Your data was added.'); return;
       }
       if (!data || typeof data !== 'object' || !('days' in data)) throw new Error('Not an ARISE backup');
       S = Object.assign(DEFAULT_STATE(), data); migrate(); save(); closeSheet(); render(); toast('SYSTEM', 'Backup restored.');
