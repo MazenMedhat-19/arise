@@ -225,8 +225,9 @@ function questList(k = dkey()) {
   if (tk !== 'rest') q.push({ id: 'train', name: `Clear the gate: ${TEMPLATES[tk].name}`, ic: tk, xp: 100, done: !!d.workout?.done, go: 'train' });
   else q.push({ id: 'walk', name: 'Recovery: walk or mobility', ic: 'rest', xp: 30, manual: true, done: !!d.manual.walk });
   if (info) {
-    const n = info.phase.ex.length, c = d.rehab.done.length;
-    q.push({ id: 'rehab', name: `${info.phase.arc}: rehab session`, ic: 'heart', xp: 80, cur: c, goal: n, done: c >= Math.ceil(n * 0.8), go: 'rehab' });
+    const rs = rehabSession(k);
+    if (rs.legDay) q.push({ id: 'rehab', name: 'Knee: leg day is your rehab', ic: 'heart', xp: 80, done: !!d.workout?.done, go: 'train' });
+    else { const n = rs.ex.length, c = d.rehab.done.filter(id => rs.ex.some(e => e.id === id)).length; q.push({ id: 'rehab', name: rs.kind === 'mini' ? 'Knee session · 10 min' : `${info.phase.arc}: rehab session`, ic: 'heart', xp: 80, cur: c, goal: n, done: c >= Math.ceil(n * 0.8), go: 'rehab' }); }
     q.push({ id: 'knee', name: 'Knee check-in', ic: 'heart', xp: 15, done: !!d.knee, go: 'rehab' });
   }
   q.push({ id: 'steps', name: 'Hit 10k steps', ic: 'bolt', xp: 30, cur: d.steps || 0, goal: 10000, done: (d.steps || 0) >= 10000, action: 'open-steps' });
@@ -1466,13 +1467,42 @@ function tickRest() {
 function stopRest() { clearInterval(RT.iv); $('#restTimer').hidden = true; }
 
 /* ================= REHAB ================= */
+
+/* ================= Knee track (ARC IV+): rehab that matches the gym week ================= */
+const KNEE_START = '2026-11-09';
+function stepHeight(k = dkey()) {
+  const w = Math.floor((fromKey(k) - fromKey(S.profile?.acl?.trackStart || KNEE_START)) / (7 * 864e5));
+  return w < 2 ? '10-15 cm' : w < 4 ? '20 cm' : '30 cm';
+}
+function rehabSession(k = dkey()) {
+  const info = aclInfo();
+  if (!info) return null;
+  if (info.idx < 3) return { ex: info.phase.ex, legDay: false, kind: 'phase' };
+  const tk = tplKeyFor(k);
+  if (tk === 'lower' || tk === 'lower2') return { ex: [], legDay: true, kind: 'leg' };
+  const ex = [
+    { id: 'k1', n: 'Spanish squat hold (band)', d: '3 × 45 s', cue: 'Band behind the knees, sit back, shins vertical. Strong quad work with almost no joint stress.' },
+    { id: 'k2', n: `Slow step-down — ${stepHeight(k)} box`, d: '2 × 8 per leg · 4 s down', cue: 'Operated leg first. Knee tracks over the 2nd toe — this is what fixes the shaky stairs.' },
+    { id: 'k3', n: 'Single-leg balance', d: '3 × 30 s per leg', cue: 'Soft knee. Eyes closed once it feels easy.' },
+    { id: 'k4', n: 'Isometric leg extension (60°)', d: '3 × 30 s · operated leg', cue: 'Push hard into a fixed pad or a band. Builds quad drive without load on the graft.' },
+  ];
+  if (info.a.graft === 'peroneus') ex.push({ id: 'k5', n: 'Band ankle eversion — operated side', d: '2 × 15', cue: 'Turn the foot out against the band. The donor ankle needs its own work.' });
+  return { ex, legDay: false, kind: 'mini' };
+}
+const e1rm = (w, r) => (+w || 0) * (1 + (+r || 0) / 30);
+function lsiList() {
+  return (S.lsi || []).map(x => ({ ...x, pct: Math.round((e1rm(x.op.w, x.op.r) / (e1rm(x.good.w, x.good.r) || 1)) * 100) })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function renderRehab() {
   const info = aclInfo();
   if (!info) {
     return `<h1 class="page">REHAB</h1><div class="panel sys"><p>No knee injury set in your profile.</p><button class="btn primary block" data-action="open-settings">Set ACL details</button></div>${comebackPanel()}`;
   }
   const k = dkey(), d = day(k), ph = info.phase, kn = d.knee || {};
-  const doneN = d.rehab.done.length, total = ph.ex.length;
+  const rs = rehabSession(k), list = rs.ex, legDay = rs.legDay;
+  const doneN = legDay ? (d.workout?.done ? 1 : 0) : d.rehab.done.filter(id => list.some(e => e.id === id)).length, total = legDay ? 1 : list.length;
+  const ls = lsiList(), lastL = ls[ls.length - 1];
   const roms = Object.entries(S.days).filter(([, x]) => x.knee?.flex).sort((a, b) => a[0].localeCompare(b[0])).slice(-30);
   const lastKnee = Object.entries(S.days).filter(([kk, x]) => x.knee && kk !== k).sort((a, b) => b[0].localeCompare(a[0]))[0]?.[1].knee;
   const warn = kn.pain >= 7 || kn.swell === 'severe';
@@ -1492,13 +1522,28 @@ function renderRehab() {
   </div>
 
   <div class="panel sys">
-    <div class="panel-title">Today's session <small>${doneN}/${total} · +80 XP at ${Math.ceil(total * 0.8)}</small></div>
+    <div class="panel-title">${legDay ? 'Today: leg day = rehab' : rs.kind === 'mini' ? 'Today’s knee session · 10 min' : 'Today’s session'} <small>${legDay ? (d.workout?.done ? 'cleared' : 'clear your leg workout') : `${doneN}/${total} · +80 XP at ${Math.ceil(total * 0.8)}`}</small></div>
     ${bar(doneN, total)}
-    <div style="margin-top:6px">${ph.ex.map(e => `<div class="check ${d.rehab.done.includes(e.id) ? 'done' : ''}" data-action="rehab-toggle" data-id="${e.id}" role="button" tabindex="0">
+    ${legDay ? `<p class="small muted" style="margin-bottom:0">Your ${esc(TEMPLATES[tplKeyFor(k)].name)} workout is the rehab today: quad strength, extra sets on the operated leg, step-downs and ankle work. Clear it in Train and this counts automatically.</p>
+      <button class="btn primary block" style="margin-top:12px" data-go="train">Open ${esc(TEMPLATES[tplKeyFor(k)].name)}</button>` : ''}
+    <div style="margin-top:6px">${list.map(e => `<div class="check ${d.rehab.done.includes(e.id) ? 'done' : ''}" data-action="rehab-toggle" data-id="${e.id}" role="button" tabindex="0">
       <span class="qbox">${d.rehab.done.includes(e.id) ? ic('check') : ''}</span>
       <div><div class="nm">${esc(e.n)}</div><div class="ds">${esc(e.d)}</div>${e.cue ? `<div class="cu">${esc(e.cue)}</div>` : ''}</div></div>`).join('')}</div>
     ${info.a.graft === 'peroneus' ? `<div class="ready-tip zone-go"><b>PERONEUS LONGUS GRAFT</b>Your hamstrings and quads weren’t cut — good news for strength. The donor ankle needs its own work: band eversion, single-leg calf raises and balance. ARISE adds them to your leg days.</div>` : ''}
     ${info.a.graft === 'hamstring' && info.idx <= 1 ? `<div class="penalty" style="border-color:rgba(255,201,77,.4);background:rgba(255,201,77,.08);color:#ffe3a3"><b style="color:var(--gold)">HAMSTRING GRAFT</b>Avoid loaded hamstring curls for the first 6-8 weeks unless your physio says otherwise.</div>` : ''}
+  </div>
+
+
+  <div class="panel sys"><div class="panel-title">Strength symmetry <small>goal ≥ 90%</small></div>
+    ${lastL ? `<div class="row between" style="align-items:flex-end"><div><div class="big-num" style="color:${lastL.pct >= 90 ? 'var(--green)' : lastL.pct >= 80 ? 'var(--gold)' : 'var(--red)'}">${lastL.pct}<span>%</span></div><div class="ml">operated vs healthy leg · ${esc(fmtDate(lastL.date))}</div></div>
+      <div class="small muted" style="text-align:right">${ls.length > 1 ? `${ls[ls.length - 1].pct - ls[0].pct >= 0 ? '+' : ''}${ls[ls.length - 1].pct - ls[0].pct}% since ${esc(fmtDate(ls[0].date))}` : 'First test logged'}</div></div>
+      ${ls.length > 1 ? lineChart(ls.map(x => ({ label: x.date.slice(5), y: x.pct })), { unit: '%', target: 90 }) : ''}` : `<p class="small muted" style="margin-top:0">Once a week, on a leg day: single-leg leg extension, same machine and seat. Find the heaviest weight you can do for 6–10 clean reps on each leg.</p>`}
+    <div class="grid2" style="margin-top:8px">
+      <div><label>Operated leg</label><div class="row" style="gap:6px"><input id="ls_ow" type="number" inputmode="decimal" placeholder="kg" value="${lastL?.op.w || ''}"><input id="ls_or" type="number" inputmode="numeric" placeholder="reps" value="${lastL?.op.r || ''}"></div></div>
+      <div><label>Healthy leg</label><div class="row" style="gap:6px"><input id="ls_gw" type="number" inputmode="decimal" placeholder="kg" value="${lastL?.good.w || ''}"><input id="ls_gr" type="number" inputmode="numeric" placeholder="reps" value="${lastL?.good.r || ''}"></div></div>
+    </div>
+    <button class="btn primary block" style="margin-top:12px" data-action="lsi-save">Save this week’s test</button>
+    <p class="small muted" style="margin-bottom:0">Below 90% = keep the extra operated-leg sets and no matches. This is an estimate — the real test is on your physio’s dynamometer.</p>
   </div>
 
   <div class="panel">
@@ -1739,7 +1784,7 @@ function openSettings() {
       <label class="btn" style="margin:0;color:var(--text);font-size:14px">Import<input type="file" accept="application/json,.json" data-change="import" hidden></label></div>
       <button class="btn danger block" style="margin-top:10px" data-action="reset-all">Reset everything</button></div>
     <button class="btn block" data-action="force-update">Check for update</button>
-    <p class="small muted" style="text-align:center">ARISE · v1.8.0 · your data never leaves this device unless you export it.</p>`);
+    <p class="small muted" style="text-align:center">ARISE · v1.9.0 · your data never leaves this device unless you export it.</p>`);
 }
 
 /* ================= Actions ================= */
@@ -1903,6 +1948,15 @@ const A = {
   },
   // Rehab
   'rehab-toggle': el => { const d = day(), id = el.dataset.id; d.rehab.done = d.rehab.done.includes(id) ? d.rehab.done.filter(x => x !== id) : [...d.rehab.done, id]; evaluate(); render(); },
+  'lsi-save': () => {
+    const op = { w: +val('ls_ow'), r: +val('ls_or') }, good = { w: +val('ls_gw'), r: +val('ls_gr') };
+    if (!op.w || !op.r || !good.w || !good.r) { toast('SYSTEM', 'Fill kg and reps for both legs.'); return; }
+    S.lsi = [...(S.lsi || []).filter(x => x.date !== dkey()), { date: dkey(), op, good }]; save();
+    const pct = Math.round(e1rm(op.w, op.r) / e1rm(good.w, good.r) * 100);
+    toast('SYMMETRY', `Operated leg at ${pct}% of the healthy leg`, pct >= 90 ? 'Target reached — book the physio tests' : `${90 - pct}% to go`);
+    if (pct >= 90) burst('level', `${pct}%`);
+    render();
+  },
   'knee-save': () => {
     day().knee = { pain: +val('kp'), swell: val('ks'), flex: val('kf') ? +val('kf') : null, ext: val('ke') ? +val('ke') : null };
     evaluate(); render();
