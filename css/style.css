@@ -678,3 +678,34 @@ button.due { border: 0; cursor: pointer; min-height: 30px; }
 .tr-ic svg { width: 18px; height: 18px; }
 .tr-n { font-weight: 800; font-size: 14px; }
 .tr-d { font-size: 12px; color: var(--muted); }
+
+/* ===== v2.0 — award polish: view transitions, sheet exit, splash ===== */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .32s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+:root[data-dir="fwd"]::view-transition-old(root) { animation-name: vtOutL; }
+:root[data-dir="fwd"]::view-transition-new(root) { animation-name: vtInR; }
+:root[data-dir="back"]::view-transition-old(root) { animation-name: vtOutR; }
+:root[data-dir="back"]::view-transition-new(root) { animation-name: vtInL; }
+@keyframes vtOutL { to { opacity: 0; transform: translateX(-28px); } }
+@keyframes vtOutR { to { opacity: 0; transform: translateX(28px); } }
+@keyframes vtInR { from { opacity: 0; transform: translateX(28px); } }
+@keyframes vtInL { from { opacity: 0; transform: translateX(-28px); } }
+.tabbar, .topbar { view-transition-name: none; }
+.tabbar { view-transition-name: tabbar; }
+.topbar { view-transition-name: topbar; }
+::view-transition-old(tabbar), ::view-transition-new(tabbar), ::view-transition-old(topbar), ::view-transition-new(topbar) { animation: none; }
+
+.sheet.closing .sheet-panel { animation: down .19s cubic-bezier(.4, 0, 1, 1) forwards; }
+.sheet.closing .sheet-backdrop { animation: fadeOut .19s ease forwards; }
+@keyframes down { to { transform: translateY(100%); } }
+@keyframes fadeOut { to { opacity: 0; } }
+
+.splash { position: fixed; inset: 0; z-index: 100; background: #000; display: grid; place-content: center; justify-items: center; gap: 14px; transition: opacity .4s ease, transform .4s ease; }
+.splash.out { opacity: 0; transform: scale(1.04); pointer-events: none; }
+.sp-mark { color: var(--accent); font-size: 26px; animation: spMark .7s cubic-bezier(.34, 1.56, .64, 1) both; }
+.sp-word { font-family: var(--num); font-weight: 800; font-size: 54px; letter-spacing: .32em; margin-right: -.32em; display: flex; }
+.sp-word span { display: inline-block; animation: spIn .5s cubic-bezier(.2, .8, .2, 1) both; }
+.sp-line { width: 120px; height: 2px; background: var(--accent); transform-origin: left; animation: spLine .7s cubic-bezier(.2, .8, .2, 1) .45s both; }
+@keyframes spMark { from { opacity: 0; transform: scale(.3) rotate(-90deg); } }
+@keyframes spIn { from { opacity: 0; transform: translateY(18px); filter: blur(6px); } }
+@keyframes spLine { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .splash { display: none; } }

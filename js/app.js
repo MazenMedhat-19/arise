@@ -307,22 +307,41 @@ function nextToast() {
 /* ================= Sheet ================= */
 let sheetClose = null;
 function openSheet(html, onClose) {
+  if (sheetClosing) { clearTimeout(sheetClosing); sheetClosing = null; $('#sheet').classList.remove('closing'); }
   if (sheetClose) { const f = sheetClose; sheetClose = null; f(); }
   $('#sheetBody').innerHTML = html;
   $('#sheet').hidden = false;
   sheetClose = onClose || null;
   $('.sheet-panel').scrollTop = 0;
 }
+let sheetClosing = null;
 function closeSheet() {
-  $('#sheet').hidden = true;
-  $('#sheetBody').innerHTML = '';
+  const sh = $('#sheet');
+  if (sh.hidden) return;
+  const finish = () => { sh.hidden = true; sh.classList.remove('closing'); $('#sheetBody').innerHTML = ''; sheetClosing = null; };
   if (sheetClose) { const f = sheetClose; sheetClose = null; f(); }
+  if (reduceMotion()) return finish();
+  sh.classList.add('closing');
+  clearTimeout(sheetClosing); sheetClosing = setTimeout(finish, 190);
 }
 
 /* ================= Router ================= */
 let route = (location.hash || '#home').slice(1);
 let lastRoute = null, lastDone = null;
-function go(r) { route = r; if (location.hash !== '#' + r) history.replaceState(null, '', '#' + r); render(); window.scrollTo(0, 0); }
+const ROUTES = ['home', 'fuel', 'train', 'rehab', 'plan'];
+function go(r) {
+  const from = ROUTES.indexOf(route), to = ROUTES.indexOf(r), changed = r !== route;
+  const doIt = () => { route = r; if (location.hash !== '#' + r) history.replaceState(null, '', '#' + r); render(); window.scrollTo(0, 0); };
+  if (changed) haptic('select');
+  if (changed && document.startViewTransition && !reduceMotion() && document.visibilityState === 'visible' && from >= 0 && to >= 0) {
+    document.documentElement.dataset.dir = to > from ? 'fwd' : 'back';
+    lastRoute = r; // the view transition animates the swap, so skip the stagger
+    let ran = false;
+    const once = () => { if (!ran) { ran = true; doIt(); } };
+    try { const vt = document.startViewTransition(once); vt.finished?.catch(() => {}); } catch (e) { once(); }
+    setTimeout(once, 450); // never leave the user stuck if a transition is skipped
+  } else doIt();
+}
 function render() {
   document.body.classList.toggle('onboarding', !S.profile);
   if (!S.profile) { $('#view').innerHTML = renderOnboarding(); updateTop(); return; }
@@ -769,7 +788,7 @@ function checkAch() {
   for (const a of ACH) { try { if (!S.ach[a.id] && a.test()) { S.ach[a.id] = dkey(); fresh.push(a); } } catch (e) { /* ignore */ } }
   if (fresh.length) {
     try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ }
-    fresh.forEach((a, i) => setTimeout(() => { queueToast('TROPHY UNLOCKED', a.name, a.desc, 'levelup'); burst('level', '🏆'); }, 400 + i * 1800));
+    fresh.forEach((a, i) => setTimeout(() => { queueToast('TROPHY UNLOCKED', a.name, a.desc, 'levelup'); burst('level', 'TROPHY'); }, 400 + i * 1800));
   }
 }
 function trophiesPanel() {
@@ -1784,7 +1803,7 @@ function openSettings() {
       <label class="btn" style="margin:0;color:var(--text);font-size:14px">Import<input type="file" accept="application/json,.json" data-change="import" hidden></label></div>
       <button class="btn danger block" style="margin-top:10px" data-action="reset-all">Reset everything</button></div>
     <button class="btn block" data-action="force-update">Check for update</button>
-    <p class="small muted" style="text-align:center">ARISE · v1.9.0 · your data never leaves this device unless you export it.</p>`);
+    <p class="small muted" style="text-align:center">ARISE · v2.0.0 · your data never leaves this device unless you export it.</p>`);
 }
 
 /* ================= Actions ================= */
@@ -2033,7 +2052,12 @@ const CHANGE = {
 /* ================= Events ================= */
 document.addEventListener('click', e => {
   const a = e.target.closest('[data-action]');
-  if (a && !a.disabled) { e.preventDefault(); A[a.dataset.action]?.(a, e); return; }
+  if (a && !a.disabled) {
+    e.preventDefault();
+    const act = a.dataset.action;
+    if (/^(set-done|fs-add|quick-save|custom-save|att|lsi-save|checkin-save|steps-save|finish-workout|weight-save|knee-save|plan-pick|log-plan-meal|rehab-toggle|quest-toggle)$/.test(act)) haptic(act === 'finish-workout' ? 'success' : 'tap');
+    A[act]?.(a, e); return;
+  }
   const g = e.target.closest('[data-go]');
   if (g) { if (g.closest('.sheet')) closeSheet(); go(g.dataset.go); }
 });
@@ -2060,26 +2084,65 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { if
 
 /* ================= Motion ================= */
 const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-function countUp(el) {
+function countUp(el, from = 0) {
   const to = +el.dataset.count, dec = +(el.dataset.dec || 0), suf = el.dataset.suf || '';
-  if (!isFinite(to) || reduceMotion()) return;
-  const t0 = performance.now(), dur = 750;
+  if (!isFinite(to) || reduceMotion() || from === to) return;
+  const t0 = performance.now(), dur = from ? 600 : 750;
   const step = now => {
     const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
-    el.textContent = (to * e).toFixed(dec) + suf;
+    el.textContent = (from + (to - from) * e).toFixed(dec) + suf;
     if (p < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 }
+/* Haptics: Android vibrate; iOS 18+ via the native switch control's built-in tick */
+let hapEl = null;
+function haptic(kind = 'tap') {
+  if (reduceMotion()) return;
+  try { if (navigator.vibrate) { navigator.vibrate(kind === 'success' ? [12, 40, 18] : kind === 'heavy' ? 28 : 8); return; } } catch (e) { /* ignore */ }
+  try {
+    if (!hapEl) {
+      hapEl = document.createElement('label'); hapEl.setAttribute('aria-hidden', 'true');
+      hapEl.style.cssText = 'position:fixed;left:-99px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+      hapEl.innerHTML = '<input type="checkbox" switch tabindex="-1">'; document.body.appendChild(hapEl);
+    }
+    hapEl.click();
+    if (kind === 'success' || kind === 'heavy') setTimeout(() => hapEl.click(), 90);
+  } catch (e) { /* ignore */ }
+}
+/* Morph values between renders: numbers count, rings sweep, bars glide from their previous value */
+const PREV = {};
+function morph(entering) {
+  const nums = $$('#view [data-count]'), arcs = $$('#view .arc'), bars = $$('#view .bar > i');
+  const prev = PREV[route];
+  if (!entering && prev && !reduceMotion()) {
+    nums.forEach((el, i) => { const p = prev.nums[i]; if (p != null && p !== +el.dataset.count) countUp(el, p); });
+    arcs.forEach((el, i) => {
+      const p = prev.arcs[i], to = el.getAttribute('stroke-dashoffset');
+      if (p == null || p === to) return;
+      el.style.transition = 'none'; el.style.strokeDashoffset = p; el.getBoundingClientRect();
+      el.style.transition = 'stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)'; el.style.strokeDashoffset = to;
+    });
+    bars.forEach((el, i) => {
+      const p = prev.bars[i], to = el.style.width;
+      if (p == null || p === to) return;
+      el.style.transition = 'none'; el.style.width = p; el.getBoundingClientRect();
+      el.style.transition = 'width .7s cubic-bezier(.2,.8,.2,1)'; el.style.width = to;
+    });
+  }
+  PREV[route] = { nums: nums.map(e => +e.dataset.count), arcs: arcs.map(e => e.getAttribute('stroke-dashoffset')), bars: bars.map(e => e.style.width) };
+}
 function motion(entering) {
-  if (entering) $$('#view [data-count]').forEach(countUp);
+  if (entering) $$('#view [data-count]').forEach(el => countUp(el));
+  morph(entering);
   const done = $$('.quest.done');
   if (route === 'home') {
-    if (lastDone) done.forEach(q => { if (!lastDone.has(q.dataset.qid)) q.classList.add('just'); });
+    if (lastDone) done.forEach(q => { if (!lastDone.has(q.dataset.qid)) { q.classList.add('just'); haptic('success'); } });
     lastDone = new Set(done.map(q => q.dataset.qid));
   }
 }
 function burst(kind = 'level', label = '') {
+  haptic('heavy');
   if (reduceMotion()) return;
   const fx = $('#fx');
   const colors = kind === 'level' ? ['#ffd60a', '#3df5a7', '#fff'] : ['#3df5a7', '#5ac8fa', '#fff'];
@@ -2114,6 +2177,14 @@ function burst(kind = 'level', label = '') {
 
 /* ================= Boot ================= */
 applyTheme();
+(() => {
+  try { if (sessionStorage.getItem('arise-splash') || reduceMotion()) return; sessionStorage.setItem('arise-splash', '1'); } catch (e) { return; }
+  const sp = document.createElement('div'); sp.className = 'splash'; sp.setAttribute('aria-hidden', 'true');
+  sp.innerHTML = `<div class="sp-mark">◆</div><div class="sp-word">${'ARISE'.split('').map((c, i) => `<span style="animation-delay:${120 + i * 55}ms">${c}</span>`).join('')}</div><div class="sp-line"></div>`;
+  document.body.appendChild(sp);
+  setTimeout(() => sp.classList.add('out'), 1050);
+  setTimeout(() => sp.remove(), 1500);
+})();
 if (location.hash.startsWith('#sync')) { const b = parseBand(decodeURIComponent(location.hash.replace(/[?&]/g, ' '))); history.replaceState(null, '', '#home'); route = 'home'; setTimeout(() => applyBand(b), 300); }
 render();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
